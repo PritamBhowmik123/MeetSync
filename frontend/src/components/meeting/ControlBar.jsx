@@ -3,13 +3,12 @@ import Button from '../ui/Button'
 
 export default function ControlBar({ onLeave, onScreenShare }) {
   const {
-    isMicOn, isCameraOn, isScreenSharing,
+    isMicOn, isCameraOn, isScreenSharing, captionsEnabled,
     toggleMic, toggleCamera, toggleSidebar, sidebarTab, setSidebarTab, isSidebarOpen
   } = useMeetingStore()
 
   const handleToggleCaptions = () => {
-    setSidebarTab('captions')
-    if (!isSidebarOpen || sidebarTab === 'captions') toggleSidebar()
+    useMeetingStore.setState({ captionsEnabled: !captionsEnabled })
   }
   const handleToggleChat = () => {
     setSidebarTab('chat')
@@ -25,11 +24,11 @@ export default function ControlBar({ onLeave, onScreenShare }) {
       {/* Left: secondary controls */}
       <div className="flex items-center gap-2">
         <ControlBtn
-          active={isSidebarOpen && sidebarTab === 'captions'}
+          active={captionsEnabled}
           onClick={handleToggleCaptions}
-          label="Captions"
+          label="CC"
           icon="💬"
-          title="Toggle Captions"
+          title="Toggle Subtitles"
         />
         <ControlBtn
           active={isSidebarOpen && sidebarTab === 'chat'}

@@ -169,5 +169,61 @@ export function useWebRTC(meetingId) {
     peersRef.current = {}
   }, [])
 
+  // True hardware toggling for Camera
+  useEffect(() => {
+    if (!localStreamRef.current) return;
+    
+    if (!isCameraOn) {
+      localStreamRef.current.getVideoTracks().forEach(t => {
+        t.stop();
+        localStreamRef.current.removeTrack(t);
+      });
+    } else {
+      if (localStreamRef.current.getVideoTracks().length === 0) {
+        navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: 'user' } })
+          .then(stream => {
+            const newTrack = stream.getVideoTracks()[0];
+            localStreamRef.current.addTrack(newTrack);
+            Object.values(peersRef.current).forEach(pc => {
+              const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+              if (sender) sender.replaceTrack(newTrack);
+            });
+            const newStream = new MediaStream(localStreamRef.current.getTracks());
+            localStreamRef.current = newStream;
+            setLocalStream(newStream);
+          })
+          .catch(err => console.warn('Camera resume failed:', err));
+      }
+    }
+  }, [isCameraOn, setLocalStream]);
+
+  // True hardware toggling for Mic
+  useEffect(() => {
+    if (!localStreamRef.current) return;
+    
+    if (!isMicOn) {
+      localStreamRef.current.getAudioTracks().forEach(t => {
+        t.stop();
+        localStreamRef.current.removeTrack(t);
+      });
+    } else {
+      if (localStreamRef.current.getAudioTracks().length === 0) {
+        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+          .then(stream => {
+            const newTrack = stream.getAudioTracks()[0];
+            localStreamRef.current.addTrack(newTrack);
+            Object.values(peersRef.current).forEach(pc => {
+              const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+              if (sender) sender.replaceTrack(newTrack);
+            });
+            const newStream = new MediaStream(localStreamRef.current.getTracks());
+            localStreamRef.current = newStream;
+            setLocalStream(newStream);
+          })
+          .catch(err => console.warn('Mic resume failed:', err));
+      }
+    }
+  }, [isMicOn, setLocalStream]);
+
   return { startLocalStream, startScreenShare, stopScreenShare, addMockPeers, cleanup }
 }

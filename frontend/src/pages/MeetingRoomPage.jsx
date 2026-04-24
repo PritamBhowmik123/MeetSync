@@ -5,7 +5,7 @@ import { useMeeting } from '../hooks/useMeeting'
 import { useAuthStore } from '../store/authStore'
 import VideoTile from '../components/meeting/VideoTile'
 import ControlBar from '../components/meeting/ControlBar'
-import CaptionsPanel from '../components/meeting/CaptionsPanel'
+import LiveCaptions from '../components/LiveCaptions'
 import ChatPanel from '../components/meeting/ChatPanel'
 import ParticipantList from '../components/meeting/ParticipantList'
 import { formatDuration } from '../utils/formatters'
@@ -26,6 +26,7 @@ export default function MeetingRoomPage() {
     isConnecting,
     meetingTitle,
     attendanceData,
+    captionsEnabled,
     joinMeeting,
     setSidebarTab,
     setScreenSharing,
@@ -99,7 +100,6 @@ export default function MeetingRoomPage() {
   const gridCount = Math.min(totalCount, 6)
 
   const sidebarContent = {
-    captions: <CaptionsPanel />,
     chat: <ChatPanel />,
     participants: <ParticipantList />,
   }
@@ -177,35 +177,18 @@ export default function MeetingRoomPage() {
               })}
             </div>
           )}
+          
+          {/* Subtitle overlay */}
+          {captionsEnabled && (
+            <div className="absolute inset-x-0 bottom-4 pointer-events-none flex justify-center z-50">
+              <LiveCaptions />
+            </div>
+          )}
         </div>
 
         {/* Sidebar */}
         {isSidebarOpen && (
           <div className="w-80 flex-shrink-0 bg-[#111118] border-l border-[#1e1e2a] flex flex-col animate-slide-in">
-            {/* Sidebar tabs */}
-            <div className="flex border-b border-[#1e1e2a] flex-shrink-0">
-              {[
-                { key: 'captions', label: 'Captions', icon: '💬' },
-                { key: 'chat', label: 'Chat', icon: '📩' },
-                { key: 'participants', label: 'People', icon: '👥' },
-              ].map(tab => {
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => setSidebarTab(tab.key)}
-                    className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-all cursor-pointer ${
-                      sidebarTab === tab.key
-                        ? 'text-indigo-300 border-b-2 border-indigo-500'
-                        : 'text-slate-500 hover:text-slate-300'
-                    }`}
-                  >
-                    <span className="text-sm">{tab.icon}</span>
-                    {tab.label}
-                  </button>
-                )
-              })}
-            </div>
-
             {/* Sidebar content */}
             <div className="flex-1 overflow-hidden">
               {sidebarContent[sidebarTab]}
