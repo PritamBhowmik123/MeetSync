@@ -1,46 +1,47 @@
-import { delay } from './api'
-
-const MOCK_USER = {
-  id: 'usr_1',
-  name: 'Alex Johnson',
-  email: 'alex@meetsync.ai',
-  avatar: null,
-  role: 'admin',
-}
-
-let currentUser = null
+const API_URL = 'http://localhost:5000/api/auth';
 
 export async function getMe() {
-  await delay(400)
-  // Simulate session persistence via an in-memory flag
-  const persisted = sessionStorage.getItem('ms_user')
+  const persisted = sessionStorage.getItem('ms_user');
   if (persisted) {
-    currentUser = JSON.parse(persisted)
-    return currentUser
+    return JSON.parse(persisted);
   }
-  throw new Error('Not authenticated')
+  throw new Error('Not authenticated');
 }
 
 export async function login(email, password) {
-  await delay(800)
-  if (!email || !password) throw new Error('Email and password required')
-  if (password.length < 6) throw new Error('Invalid credentials')
-  currentUser = { ...MOCK_USER, email }
-  sessionStorage.setItem('ms_user', JSON.stringify(currentUser))
-  return currentUser
+  const response = await fetch(`${API_URL}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Login failed');
+  }
+
+  const user = await response.json();
+  sessionStorage.setItem('ms_user', JSON.stringify(user));
+  return user;
 }
 
 export async function signup(name, email, password) {
-  await delay(900)
-  if (!name || !email || !password) throw new Error('All fields required')
-  if (password.length < 6) throw new Error('Password must be at least 6 characters')
-  currentUser = { ...MOCK_USER, name, email, id: `usr_${Date.now()}` }
-  sessionStorage.setItem('ms_user', JSON.stringify(currentUser))
-  return currentUser
+  const response = await fetch(`${API_URL}/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Signup failed');
+  }
+
+  const user = await response.json();
+  sessionStorage.setItem('ms_user', JSON.stringify(user));
+  return user;
 }
 
 export async function logout() {
-  await delay(200)
-  currentUser = null
-  sessionStorage.removeItem('ms_user')
+  sessionStorage.removeItem('ms_user');
 }

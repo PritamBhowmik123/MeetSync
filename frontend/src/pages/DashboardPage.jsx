@@ -79,7 +79,13 @@ export default function DashboardPage() {
             </h1>
             <p className="text-slate-500 text-sm mt-1">Here's what's happening with your meetings</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button variant="secondary" onClick={() => navigate('/face-enroll')} className="border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/10">
+              <span>👤</span> Enroll Face
+            </Button>
+            <Button variant="secondary" onClick={() => navigate('/face-recognize')} className="border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10">
+              <span>👁️</span> Test Recognition
+            </Button>
             <Button variant="secondary" onClick={() => { setShowJoinModal(true); setModalError('') }}>
               <span>🔗</span> Join Meeting
             </Button>

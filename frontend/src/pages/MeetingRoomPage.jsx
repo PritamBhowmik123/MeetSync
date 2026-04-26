@@ -40,6 +40,10 @@ export default function MeetingRoomPage() {
   const [attendanceFlash, setAttendanceFlash] = useState(false)
   const timerRef = useRef(null)
   const joinedRef = useRef(false)
+  const faceCanvasRef = useRef(null)
+
+  const [faceResult, setFaceResult] = useState(null)
+  const [isFaceProcessing, setIsFaceProcessing] = useState(false)
 
   const title = state?.title || meetingTitle || 'Team Meeting'
 
@@ -74,6 +78,54 @@ export default function MeetingRoomPage() {
       return () => clearTimeout(t)
     }
   }, [Object.keys(attendanceData).length])
+
+  // Face Recognition logic
+  useEffect(() => {
+    let interval;
+    if (isJoined && localStream) {
+      interval = setInterval(async () => {
+        if (isFaceProcessing) return;
+
+        // Create a temporary video element to capture the frame
+        const tempVideo = document.createElement('video');
+        tempVideo.srcObject = localStream;
+        
+        tempVideo.onloadedmetadata = () => {
+          tempVideo.play();
+          
+          // Use a timeout to ensure the video is actually playing and has frames
+          setTimeout(async () => {
+            const canvas = faceCanvasRef.current || document.createElement('canvas');
+            canvas.width = tempVideo.videoWidth;
+            canvas.height = tempVideo.videoHeight;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(tempVideo, 0, 0);
+            const base64Image = canvas.toDataURL('image/jpeg');
+
+            setIsFaceProcessing(true);
+            try {
+              const res = await fetch('http://localhost:5000/api/face/recognize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: base64Image })
+              });
+              const data = await res.json();
+              setFaceResult(data);
+            } catch (e) {
+              console.error('Face recognition error:', e);
+            } finally {
+              setIsFaceProcessing(false);
+              // Cleanup
+              tempVideo.pause();
+              tempVideo.srcObject = null;
+            }
+          }, 100);
+        };
+      }, 3000);
+    }
+    return () => clearInterval(interval);
+  }, [isJoined, localStream, isFaceProcessing]);
 
   const handleLeave = () => {
     leave()
@@ -131,6 +183,18 @@ export default function MeetingRoomPage() {
             <span>👥</span>
             <span>{totalCount} participant{totalCount !== 1 ? 's' : ''}</span>
           </div>
+
+          {/* Face Recognition Badge */}
+          {faceResult && (
+            <div className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-full border ${
+              faceResult.matched 
+                ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/25' 
+                : 'bg-amber-500/15 text-amber-300 border-amber-500/25'
+            }`}>
+              <span>{faceResult.matched ? '👤 Verified' : '❓ Unknown User'}</span>
+              {faceResult.matched && <span className="opacity-60">ID: {faceResult.user_id}</span>}
+            </div>
+          )}
 
           {/* Timer */}
           <div className="font-mono text-sm text-slate-300 bg-[#1c1c28] px-3 py-1 rounded-lg border border-[#2a2a3a]">

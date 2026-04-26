@@ -6,7 +6,8 @@ import DashboardPage from '../pages/DashboardPage'
 import MeetingRoomPage from '../pages/MeetingRoomPage'
 import PostMeetingSummaryPage from '../pages/PostMeetingSummaryPage'
 import ReportsPage from '../pages/ReportsPage'
-
+import FaceEnroll from '../components/FaceEnroll'
+import FaceRecognition from '../components/FaceRecognition'
 const ProtectedRoute = ({ children }) => {
   const { user } = useAuthStore()
   return user ? children : <Navigate to="/login" replace />
@@ -27,6 +28,8 @@ export default function AppRoutes() {
       <Route path="/meeting/:id" element={<ProtectedRoute><MeetingRoomPage /></ProtectedRoute>} />
       <Route path="/summary/:id" element={<ProtectedRoute><PostMeetingSummaryPage /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
+      <Route path="/face-enroll" element={<FaceEnroll />} />
+      <Route path="/face-recognize" element={<FaceRecognition />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
