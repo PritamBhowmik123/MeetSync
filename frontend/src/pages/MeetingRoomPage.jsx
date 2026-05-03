@@ -35,7 +35,7 @@ export default function MeetingRoomPage() {
     reset,
   } = useMeetingStore()
 
-  const { join, leave, startScreenShare, stopScreenShare } = useMeeting(id)
+  const { join, leave, startScreenShare, stopScreenShare, sendMessage } = useMeeting(id)
 
   const [elapsed, setElapsed] = useState(0)
   const [attendanceFlash, setAttendanceFlash] = useState(false)
@@ -63,11 +63,11 @@ export default function MeetingRoomPage() {
 
   // Join after store is ready
   useEffect(() => {
-    if (!joinedRef.current) {
+    if (!joinedRef.current && join) {
       joinedRef.current = true
       join()
     }
-  }, [])
+  }, [join])
 
   // Timer
   useEffect(() => {
@@ -166,7 +166,7 @@ export default function MeetingRoomPage() {
   const gridCount = Math.min(totalCount, 6)
 
   const sidebarContent = {
-    chat: <ChatPanel />,
+    chat: <ChatPanel onSendMessage={sendMessage} />,
     participants: <ParticipantList />,
   }
 

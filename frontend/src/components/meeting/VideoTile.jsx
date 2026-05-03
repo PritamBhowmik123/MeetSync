@@ -25,7 +25,7 @@ export default function VideoTile({ stream, name, peerId, isLocal = false, isMut
       }`}
     >
       {/* Video */}
-      {stream && !isCameraOff ? (
+      {stream && stream.getVideoTracks().length > 0 && !isCameraOff ? (
         <video
           ref={videoRef}
           autoPlay

@@ -4,7 +4,7 @@ import { useAuthStore } from '../../store/authStore'
 import Avatar from '../ui/Avatar'
 import { relativeTime } from '../../utils/formatters'
 
-export default function ChatPanel() {
+export default function ChatPanel({ onSendMessage }) {
   const { messages, addMessage } = useMeetingStore()
   const { user } = useAuthStore()
   const [input, setInput] = useState('')
@@ -17,7 +17,9 @@ export default function ChatPanel() {
   const handleSend = () => {
     const text = input.trim()
     if (!text) return
-    addMessage({ text, sender: user?.name || 'You', senderId: 'local', timestamp: new Date().toISOString() })
+    const userName = user?.name || 'You';
+    addMessage({ text, sender: userName, senderId: 'local', timestamp: new Date().toISOString() })
+    onSendMessage?.(text, userName)
     setInput('')
   }
 

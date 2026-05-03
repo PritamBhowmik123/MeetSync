@@ -16,6 +16,7 @@ export function useMeeting(meetingId) {
     updateParticipantMedia,
     isMicOn,
     isCameraOn,
+    isJoined,
   } = useMeetingStore();
 
   const { user } = useAuthStore();
@@ -46,7 +47,7 @@ export function useMeeting(meetingId) {
     onOffer: (data) => socketCallbacks.current.onOffer?.(data),
     onAnswer: (data) => socketCallbacks.current.onAnswer?.(data),
     onIceCandidate: (data) => socketCallbacks.current.onIceCandidate?.(data),
-    onMessage: (data) => addMessage({ ...data, from: data.userName }),
+    onMessage: (data) => socketCallbacks.current.onMessage?.(data),
     onMediaState: (data) => socketCallbacks.current.onMediaState?.(data),
     onCaption: (data) => socketCallbacks.current.onCaption?.(data),
   });
@@ -55,16 +56,18 @@ export function useMeeting(meetingId) {
   useEffect(() => {
     socketCallbacks.current = {
       onRoomPeers: (peers) => {
-        // Call all existing peers in the room
         peers.forEach(peer => {
-          updateParticipantMedia(peer.socketId, { isMuted: peer.isMuted, isCameraOff: peer.isCameraOff, name: peer.userName });
+          updateParticipantMedia(peer.socketId, { 
+            isMuted: peer.isMuted, 
+            isCameraOff: peer.isCameraOff, 
+            name: peer.userName 
+          });
           callPeer(peer.socketId, peer, emit);
         });
       },
       onUserJoined: ({ socketId, userId, userName, isMuted, isCameraOff }) => {
-        console.log('[Meeting] User joined:', userName, '- waiting for their offer');
+        console.log('[Meeting] User joined:', userName);
         updateParticipantMedia(socketId, { isMuted, isCameraOff, name: userName });
-        // Do not callPeer here, otherwise both sides emit offers and cause a glare/race condition!
       },
       onUserLeft: ({ socketId, userName }) => {
         console.log('[Meeting] User left:', userName);
@@ -79,13 +82,28 @@ export function useMeeting(meetingId) {
       onCaption: (caption) => {
         addCaption(caption);
       },
+      onMessage: (msg) => {
+        addMessage({
+          id: msg.id,
+          text: msg.message,
+          sender: msg.userName,
+          senderId: msg.from,
+          timestamp: msg.timestamp,
+        });
+      },
     };
-  }, [callPeer, handleOffer, handleAnswer, handleIceCandidate, closePeer, emit, updateParticipantMedia, addCaption]);
+  }, [callPeer, handleOffer, handleAnswer, handleIceCandidate, closePeer, emit, updateParticipantMedia, addCaption, addMessage]);
+
+  const sendMessage = useCallback((text, userName) => {
+    emit('chat-message', { meetingId, message: text, userName });
+  }, [emit, meetingId]);
 
   // ── Emit media state when mic/camera toggles ──────────────────────────────
   useEffect(() => {
-    emit('media-state', { meetingId, isMuted: !isMicOn, isCameraOff: !isCameraOn });
-  }, [isMicOn, isCameraOn, emit, meetingId]);
+    if (isJoined) {
+      emit('media-state', { meetingId, isMuted: !isMicOn, isCameraOff: !isCameraOn });
+    }
+  }, [isMicOn, isCameraOn, emit, meetingId, isJoined]);
 
   // ── Flush transcript batch to backend every 10s ───────────────────────────
   const flushTranscripts = useCallback(async () => {
@@ -97,9 +115,12 @@ export function useMeeting(meetingId) {
 
   // ── Start captions + transcript pipeline ─────────────────────────────────
   const startCaptions = useCallback(() => {
+    // Stop any existing stream first
+    captionStopRef.current?.();
+    clearInterval(transcriptTimerRef.current);
+    
     captionStopRef.current = startCaptionStream((caption) => {
       addCaption(caption);
-      // Broadcast local caption to room
       emit('caption', { meetingId, caption });
       
       if (caption.final && caption.text?.trim()) {
@@ -107,9 +128,8 @@ export function useMeeting(meetingId) {
       }
     }, user?.name || 'You');
 
-    // Flush transcripts to DB every 10s
     transcriptTimerRef.current = setInterval(flushTranscripts, 10000);
-  }, [addCaption, flushTranscripts, user?.name]);
+  }, [addCaption, flushTranscripts, user?.name, emit, meetingId]);
 
   // ── Join meeting ──────────────────────────────────────────────────────────
   const join = useCallback(async () => {
@@ -125,25 +145,21 @@ export function useMeeting(meetingId) {
       isCameraOff: !isCameraOn
     });
 
-    // Mark attendance in DB
     if (user?.id) {
       await markAttendance(meetingId, user.id);
     }
 
     startCaptions();
-  }, [startLocalStream, setJoined, emit, meetingId, user, startCaptions]);
+  }, [startLocalStream, setJoined, emit, meetingId, user, startCaptions, isMicOn, isCameraOn]);
 
   // ── Leave meeting ─────────────────────────────────────────────────────────
   const leave = useCallback(async () => {
-    // Stop captions
     captionStopRef.current?.();
     clearInterval(transcriptTimerRef.current);
-    await flushTranscripts(); // flush remaining
+    await flushTranscripts();
 
-    // Notify socket
     emit('leave-room', { meetingId });
 
-    // Mark leave in DB
     if (user?.id) {
       await markLeave(meetingId, user.id);
     }
@@ -158,10 +174,9 @@ export function useMeeting(meetingId) {
       captionStopRef.current?.();
       clearInterval(transcriptTimerRef.current);
       cleanup();
-      // Only clean the store if we actually unmount the component
       leaveMeeting();
     };
   }, [cleanup, leaveMeeting]);
 
-  return { join, leave, startScreenShare, stopScreenShare };
+  return { join, leave, startScreenShare, stopScreenShare, sendMessage };
 }

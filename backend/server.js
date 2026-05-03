@@ -122,7 +122,7 @@ io.on('connection', (socket) => {
 
   // ── Chat Messages ──────────────────────────────────────────────────────────
   socket.on('chat-message', ({ meetingId, message, userName }) => {
-    io.to(String(meetingId)).emit('chat-message', {
+    socket.to(String(meetingId)).emit('chat-message', {
       id: Date.now(),
       from: socket.id,
       userName,

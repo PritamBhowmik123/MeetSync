@@ -51,11 +51,15 @@ export const useMeetingStore = create((set, get) => ({
   addRemoteStream: (peerId, stream, name) =>
     set((s) => {
       const existing = s.participants.find(p => p.id === peerId);
+      // Logic: Prefer a new name if it's specific (not Guest/socketId). Otherwise keep existing name.
+      const isNewNameValid = name && name !== peerId && name !== 'Guest';
+      const updatedName = isNewNameValid ? name : (existing?.name || name || peerId);
+      
       return {
         remoteStreams: { ...s.remoteStreams, [peerId]: stream },
         participants: existing
-          ? s.participants.map(p => p.id === peerId ? { ...p, stream, name } : p)
-          : [...s.participants, { id: peerId, name, stream, isMuted: false, isCameraOff: false }],
+          ? s.participants.map(p => p.id === peerId ? { ...p, stream, name: updatedName } : p)
+          : [...s.participants, { id: peerId, name: updatedName, stream, isMuted: false, isCameraOff: false }],
       };
     }),
 
@@ -68,18 +72,21 @@ export const useMeetingStore = create((set, get) => ({
       }
     }),
 
-  updateParticipantMedia: (peerId, { isMuted, isCameraOff }) =>
+  updateParticipantMedia: (peerId, { isMuted, isCameraOff, name }) =>
     set((s) => {
       const existing = s.participants.find(p => p.id === peerId);
+      const isNewNameValid = name && name !== peerId && name !== 'Guest';
+      const updatedName = isNewNameValid ? name : (existing?.name || peerId);
+      
       if (existing) {
         return {
           participants: s.participants.map(p => 
-            p.id === peerId ? { ...p, isMuted: isMuted ?? p.isMuted, isCameraOff: isCameraOff ?? p.isCameraOff } : p
+            p.id === peerId ? { ...p, isMuted: isMuted ?? p.isMuted, isCameraOff: isCameraOff ?? p.isCameraOff, name: updatedName } : p
           )
         };
       } else {
         return {
-          participants: [...s.participants, { id: peerId, name: peerId, stream: null, isMuted: isMuted ?? false, isCameraOff: isCameraOff ?? false }]
+          participants: [...s.participants, { id: peerId, name: updatedName, stream: null, isMuted: isMuted ?? false, isCameraOff: isCameraOff ?? false }]
         };
       }
     }),
