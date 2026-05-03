@@ -7,15 +7,20 @@ export default function MeetingCard({ meeting, type = 'upcoming' }) {
   const navigate = useNavigate()
   const isPast = type === 'past'
 
+  // Normalize DB snake_case → camelCase
+  const scheduledAt = meeting.scheduledAt || meeting.scheduled_at
+  const participants = meeting.participants || []
+  const attendancePct = meeting.attendance ?? null
+  const code = meeting.code || ''
+  const duration = meeting.duration || 0
+
   const handleClick = () => {
     if (isPast) {
-      navigate(`/summary/${meeting.id}`)
+      navigate(`/summary/${meeting.id}`, { state: { title: meeting.title } })
     } else {
-      navigate(`/meeting/${meeting.id}`)
+      navigate(`/meeting/${meeting.id}`, { state: { title: meeting.title, isHost: false } })
     }
   }
-
-  const attendancePct = meeting.attendance ?? null
 
   return (
     <div
@@ -30,7 +35,7 @@ export default function MeetingCard({ meeting, type = 'upcoming' }) {
             {meeting.title}
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            {formatDate(meeting.scheduledAt)} · {formatTime(meeting.scheduledAt)}
+            {formatDate(scheduledAt)} · {formatTime(scheduledAt)}
           </p>
         </div>
         <div className="flex-shrink-0">
@@ -51,26 +56,34 @@ export default function MeetingCard({ meeting, type = 'upcoming' }) {
       <div className="flex items-center justify-between">
         {/* Participant avatars */}
         <div className="flex items-center">
-          <div className="flex -space-x-1.5">
-            {meeting.participants.slice(0, 4).map((name, i) => (
-              <Avatar key={i} name={name} size="xs" className="ring-2 ring-[#16161f]" />
-            ))}
-            {meeting.participants.length > 4 && (
-              <div className="w-6 h-6 rounded-full bg-[#2a2a3a] border-2 border-[#16161f] flex items-center justify-center text-[9px] text-slate-400">
-                +{meeting.participants.length - 4}
-              </div>
-            )}
-          </div>
-          <span className="ml-2 text-xs text-slate-500">{meeting.participants.length} people</span>
+          {participants.length > 0 ? (
+            <div className="flex -space-x-1.5">
+              {participants.slice(0, 4).map((name, i) => (
+                <Avatar key={i} name={typeof name === 'string' ? name : String(name)} size="xs" className="ring-2 ring-[#16161f]" />
+              ))}
+              {participants.length > 4 && (
+                <div className="w-6 h-6 rounded-full bg-[#2a2a3a] border-2 border-[#16161f] flex items-center justify-center text-[9px] text-slate-400">
+                  +{participants.length - 4}
+                </div>
+              )}
+            </div>
+          ) : (
+            <span className="text-xs text-slate-600 italic">No participants yet</span>
+          )}
+          {participants.length > 0 && (
+            <span className="ml-2 text-xs text-slate-500">{participants.length} people</span>
+          )}
         </div>
 
         <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span>🕒 {meeting.duration}m</span>
-          <span className="text-[10px] bg-[#1c1c28] group-hover:bg-indigo-600/20 group-hover:text-indigo-300
-            text-slate-500 px-2 py-0.5 rounded-full border border-[#2a2a3a] group-hover:border-indigo-500/30
-            transition-all font-mono">
-            #{meeting.code}
-          </span>
+          {duration > 0 && <span>🕒 {duration}m</span>}
+          {code && (
+            <span className="text-[10px] bg-[#1c1c28] group-hover:bg-indigo-600/20 group-hover:text-indigo-300
+              text-slate-500 px-2 py-0.5 rounded-full border border-[#2a2a3a] group-hover:border-indigo-500/30
+              transition-all font-mono">
+              #{code}
+            </span>
+          )}
         </div>
       </div>
     </div>

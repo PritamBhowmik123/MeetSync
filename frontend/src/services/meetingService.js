@@ -1,53 +1,46 @@
-import { delay } from './api'
-import { MOCK_MEETINGS, MOCK_PAST_MEETINGS } from '../utils/mockData'
+import { apiRequest } from './api';
 
 export async function getUpcomingMeetings() {
-  await delay(600)
-  return MOCK_MEETINGS
+  const all = await apiRequest('/api/meetings');
+  return all.filter(m => m.status === 'scheduled' || m.status === 'live');
 }
 
 export async function getPastMeetings() {
-  await delay(700)
-  return MOCK_PAST_MEETINGS
+  const all = await apiRequest('/api/meetings');
+  return all.filter(m => m.status === 'completed').map(m => ({
+    ...m,
+    // normalize participant count from attendance (or default)
+    participants: m.participants || [],
+    attendance: m.attendance || 0,
+    duration: m.duration || 0,
+  }));
 }
 
 export async function getMeetingById(id) {
-  await delay(400)
-  const all = [...MOCK_MEETINGS, ...MOCK_PAST_MEETINGS]
-  const m = all.find(m => m.id === id)
-  if (!m) throw new Error('Meeting not found')
-  return m
+  return apiRequest(`/api/meetings/${id}`);
 }
 
 export async function createMeeting(title, scheduledAt) {
-  await delay(600)
-  return {
-    id: `meet_${Date.now()}`,
-    title,
-    scheduledAt,
-    status: 'scheduled',
-    participants: [],
-    code: Math.random().toString(36).substring(2, 8).toUpperCase(),
-  }
+  return apiRequest('/api/meetings', {
+    method: 'POST',
+    body: JSON.stringify({ title, scheduled_at: scheduledAt }),
+  });
 }
 
 export async function joinMeetingByCode(code) {
-  await delay(500)
-  return {
-    id: `meet_${Date.now()}`,
-    title: `Meeting #${code}`,
-    code,
-    status: 'live',
-    isHost: false,
-  }
+  return apiRequest('/api/meetings/join', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
 }
 
 export async function getDashboardStats() {
-  await delay(500)
-  return {
-    totalMeetings: 47,
-    avgAttendance: 84,
-    totalHours: 132,
-    upcomingCount: 3,
-  }
+  return apiRequest('/api/meetings/stats');
+}
+
+export async function updateMeetingStatus(id, status) {
+  return apiRequest(`/api/meetings/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
 }

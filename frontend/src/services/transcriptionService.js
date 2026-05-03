@@ -1,52 +1,99 @@
-import { delay } from './api'
+import { apiRequest } from './api';
 
-const CAPTIONS_POOL = [
-  "Alright, let's start with the quarterly review. Everyone ready?",
-  "Q3 numbers are looking strong. Revenue up 23% year-over-year.",
-  "We need to finalize the roadmap before the end of this sprint.",
-  "The design team has submitted the new mockups. Action item for everyone.",
-  "Can we schedule a follow-up call with the stakeholders by Friday?",
-  "The AI integration is ahead of schedule. Great work from the backend team.",
-  "I'll take ownership of the client report. Should be done by Thursday.",
-  "Let's make sure the documentation is updated with these new decisions.",
-  "Attendance is tracked automatically. No manual check-in needed.",
-  "The meeting summary will be sent to everyone within 30 minutes.",
-]
-
-let captionIndex = 0
-
-const SPEAKERS = [
-  { id: 'local', name: 'You' },
-  { id: 'peer_1', name: 'Sarah Chen' },
-  { id: 'peer_2', name: 'Mark Williams' },
-  { id: 'peer_3', name: 'Priya Patel' },
-]
-
-export async function sendAudioChunk(chunk) {
-  await delay(100)
-  return { received: true }
+/**
+ * Save a single transcript chunk to the backend.
+ */
+export async function saveTranscriptChunk(meetingId, userId, text) {
+  if (!meetingId || !text?.trim()) return;
+  try {
+    return await apiRequest('/api/transcripts', {
+      method: 'POST',
+      body: JSON.stringify({
+        meeting_id: meetingId,
+        user_id: userId,
+        text: text.trim(),
+        timestamp: new Date().toISOString(),
+      }),
+    });
+  } catch (e) {
+    console.warn('Failed to save transcript chunk:', e.message);
+  }
 }
 
-export function startCaptionStream(onCaption) {
-  const speaker = SPEAKERS[captionIndex % SPEAKERS.length]
-  const text = CAPTIONS_POOL[captionIndex % CAPTIONS_POOL.length]
-  captionIndex++
+/**
+ * Fetch the full transcript for a meeting.
+ */
+export async function getFullTranscript(meetingId) {
+  try {
+    return await apiRequest(`/api/transcripts/${meetingId}`);
+  } catch (e) {
+    console.warn('Failed to fetch transcript:', e.message);
+    return [];
+  }
+}
 
-  let charIdx = 0
-  const words = text.split(' ')
-  let wordIdx = 0
-  let current = ''
+/**
+ * Start a caption stream using the Web Speech API.
+ * Final transcripts are emitted via onCaption({ speaker, text, final: true }).
+ * Returns a cleanup function.
+ */
+export function startCaptionStream(onCaption, speakerName = 'You') {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  const interval = setInterval(() => {
-    if (wordIdx >= words.length) {
-      clearInterval(interval)
-      onCaption({ speaker, text: current, final: true })
-      return
+  if (!SpeechRecognition) {
+    console.warn('Web Speech API not supported in this browser.');
+    return () => {};
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  let stopped = false;
+
+  recognition.onresult = (event) => {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      if (result.isFinal) {
+        onCaption({
+          speaker: { id: 'local', name: speakerName },
+          text: result[0].transcript.trim(),
+          final: true,
+        });
+      } else {
+        interim += result[0].transcript;
+      }
     }
-    current += (wordIdx > 0 ? ' ' : '') + words[wordIdx]
-    wordIdx++
-    onCaption({ speaker, text: current, final: false })
-  }, 120)
+    if (interim) {
+      onCaption({
+        speaker: { id: 'local', name: speakerName },
+        text: interim,
+        final: false,
+      });
+    }
+  };
 
-  return () => clearInterval(interval)
+  recognition.onerror = (e) => {
+    if (e.error === 'no-speech') return; // ignore silence
+    console.warn('Speech recognition error:', e.error);
+  };
+
+  recognition.onend = () => {
+    if (!stopped) {
+      try { recognition.start(); } catch (_) {}
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch (e) {
+    console.warn('Could not start speech recognition:', e);
+  }
+
+  return () => {
+    stopped = true;
+    try { recognition.stop(); } catch (_) {}
+  };
 }

@@ -1,109 +1,34 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-class MockSpeechRecognition {
-  constructor() {
-    this.continuous = false;
-    this.interimResults = false;
-    this.onstart = null;
-    this.onend = null;
-    this.onerror = null;
-    this.onresult = null;
-    this._isListening = false;
-    this._interval = null;
-    
-    this.mockSentences = [
-      "Hello and welcome to the meeting.",
-      "Today we're going to discuss the new Live Caption System.",
-      "As you can see, the speech to text is appearing in real-time.",
-      "This is useful for accessibility and keeping track of the conversation.",
-      "Let's review the upcoming features in the next sprint."
-    ];
-    this.sentenceIndex = 0;
-  }
-
-  start() {
-    if (this._isListening) return;
-    this._isListening = true;
-    if (this.onstart) this.onstart();
-
-    this._simulateSpeech();
-  }
-
-  stop() {
-    if (!this._isListening) return;
-    this._isListening = false;
-    if (this._interval) clearInterval(this._interval);
-    if (this.onend) this.onend();
-  }
-
-  _simulateSpeech() {
-    if (!this._isListening) return;
-
-    let currentSentence = this.mockSentences[this.sentenceIndex % this.mockSentences.length];
-    this.sentenceIndex++;
-    
-    let words = currentSentence.split(' ');
-    let wordIndex = 0;
-    let spokenSoFar = "";
-
-    this._interval = setInterval(() => {
-      if (!this._isListening) {
-        clearInterval(this._interval);
-        return;
-      }
-
-      spokenSoFar += (wordIndex === 0 ? "" : " ") + words[wordIndex];
-      const isFinal = wordIndex === words.length - 1;
-      
-      const event = {
-        results: [
-          {
-            0: { transcript: spokenSoFar },
-            isFinal: isFinal
-          }
-        ],
-        resultIndex: 0
-      };
-
-      if (this.onresult) this.onresult(event);
-
-      wordIndex++;
-
-      if (isFinal) {
-        clearInterval(this._interval);
-        if (this._isListening) {
-           setTimeout(() => this._simulateSpeech(), 1500);
-        }
-      }
-    }, 400); // simulate 400ms per word
-  }
-}
-
-export function useSpeechRecognition({ mockFallback = true } = {}) {
+/**
+ * Real Web Speech API hook — no mock fallback.
+ * Uses browser's native SpeechRecognition with continuous mode + auto-restart.
+ */
+export function useSpeechRecognition() {
   const [isListening, setIsListening] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState([]);
   const [error, setError] = useState(null);
+  const [isSupported, setIsSupported] = useState(true);
 
   const recognitionRef = useRef(null);
+  const shouldRestartRef = useRef(false);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-    } else if (mockFallback) {
-      console.info("Web Speech API not found. Using MockSpeechRecognition fallback.");
-      recognitionRef.current = new MockSpeechRecognition();
-    } else {
-      console.error("Web Speech API not supported in this browser.");
+
+    if (!SpeechRecognition) {
+      setIsSupported(false);
       setError('browser-not-supported');
+      console.warn('Web Speech API not supported in this browser.');
       return;
     }
 
-    const recognition = recognitionRef.current;
+    const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    recognitionRef.current = recognition;
 
     recognition.onstart = () => {
       setIsListening(true);
@@ -112,81 +37,74 @@ export function useSpeechRecognition({ mockFallback = true } = {}) {
 
     recognition.onresult = (event) => {
       let interim = '';
-      let newFinalTexts = [];
+      const newFinals = [];
 
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          newFinalTexts.push(event.results[i][0].transcript);
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          newFinals.push({
+            text: result[0].transcript.trim(),
+            timestamp: new Date().toISOString(),
+            speaker: { name: 'You', id: 'local' },
+            id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+          });
         } else {
-          interim += event.results[i][0].transcript;
+          interim += result[0].transcript;
         }
       }
 
       setCurrentTranscript(interim);
-      
-      if (newFinalTexts.length > 0) {
-        setFinalTranscript(prev => [...prev, ...newFinalTexts.map(text => ({
-          text: text.trim(),
-          timestamp: new Date().toISOString(),
-          speaker: { name: 'Current Speaker' }, // Mock label
-          id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString() + Math.random()
-        }))]);
+      if (newFinals.length > 0) {
+        setFinalTranscript(prev => [...prev, ...newFinals]);
       }
     };
 
     recognition.onerror = (event) => {
-      console.error('Speech recognition error', event.error);
+      if (event.error === 'no-speech') return; // normal silence
+      console.warn('Speech recognition error:', event.error);
       setError(event.error);
-      
-      // Attempt to restart silently if it's a no-speech error
-      if (event.error === 'no-speech') {
-        try {
-          recognition.start();
-        } catch(e) {}
-      } else {
+      if (event.error !== 'aborted') {
         setIsListening(false);
       }
     };
 
     recognition.onend = () => {
-      // Auto-restart if we are supposed to be continuous and listening wasn't explicitly stopped.
-      // This helps with endpoints that time out after a few seconds of silence.
-      if (recognitionRef.current && isListening) {
-         try {
-           recognitionRef.current.start();
-         } catch(e) {}
+      // Auto-restart if we should still be listening
+      if (shouldRestartRef.current) {
+        try {
+          recognition.start();
+        } catch (_) {
+          setIsListening(false);
+        }
       } else {
-         setIsListening(false);
+        setIsListening(false);
       }
     };
 
-    // Cleanup
     return () => {
-      if (recognition) {
-        recognition.stop();
-      }
+      shouldRestartRef.current = false;
+      try { recognition.stop(); } catch (_) {}
     };
-  }, [mockFallback]);
+  }, []);
 
   const startListening = useCallback(() => {
+    if (!recognitionRef.current || isListening) return;
+    shouldRestartRef.current = true;
     setError(null);
-    if (recognitionRef.current && !isListening) {
-      try {
-        recognitionRef.current.start();
-      } catch (err) {
-        console.error("Could not start recognition", err);
-      }
+    try {
+      recognitionRef.current.start();
+    } catch (err) {
+      console.warn('Could not start recognition:', err);
     }
   }, [isListening]);
 
   const stopListening = useCallback(() => {
-    if (recognitionRef.current && isListening) {
-       // Temporarily disable auto-restart logic
-       recognitionRef.current.onend = () => setIsListening(false);
-       recognitionRef.current.stop();
-       setIsListening(false);
-    }
-  }, [isListening]);
+    shouldRestartRef.current = false;
+    try {
+      recognitionRef.current?.stop();
+    } catch (_) {}
+    setIsListening(false);
+  }, []);
 
   const resetTranscript = useCallback(() => {
     setCurrentTranscript('');
@@ -195,11 +113,12 @@ export function useSpeechRecognition({ mockFallback = true } = {}) {
 
   return {
     isListening,
+    isSupported,
     currentTranscript,
     finalTranscript,
     error,
     startListening,
     stopListening,
-    resetTranscript
+    resetTranscript,
   };
 }

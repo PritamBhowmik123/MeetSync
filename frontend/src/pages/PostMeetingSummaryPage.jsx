@@ -5,7 +5,7 @@ import Avatar from '../components/ui/Avatar'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
 import Skeleton from '../components/ui/Skeleton'
-import { getMeetingSummary, getFullTranscript } from '../services/summaryService'
+import { getMeetingSummary, generateMeetingSummary, getFullTranscript } from '../services/summaryService'
 import { getAttendanceReport } from '../services/attendanceService'
 import { formatDate, formatTime } from '../utils/formatters'
 
@@ -18,6 +18,7 @@ export default function PostMeetingSummaryPage() {
   const [transcript, setTranscript] = useState([])
   const [attendance, setAttendance] = useState([])
   const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState('summary')
 
@@ -26,22 +27,55 @@ export default function PostMeetingSummaryPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [s, t, a] = await Promise.all([
-          getMeetingSummary(id),
+        // Load transcript and attendance in parallel
+        const [t, a] = await Promise.all([
           getFullTranscript(id),
           getAttendanceReport(id),
         ])
-        setSummary(s)
         setTranscript(t)
         setAttendance(a)
+
+        // Try to load existing summary first
+        try {
+          const s = await getMeetingSummary(id)
+          setSummary(s)
+        } catch (summaryErr) {
+          // No existing summary — auto-generate if transcript exists
+          if (t.length > 0) {
+            setGenerating(true)
+            try {
+              const generated = await generateMeetingSummary(id)
+              setSummary(generated)
+            } catch (genErr) {
+              setError(`Could not generate AI summary: ${genErr.message}`)
+            } finally {
+              setGenerating(false)
+            }
+          } else {
+            setError('No transcript found. Speak during the meeting to enable AI summary.')
+          }
+        }
       } catch (e) {
-        setError('Failed to load meeting summary.')
+        setError('Failed to load meeting data: ' + e.message)
       } finally {
         setLoading(false)
       }
     }
     load()
   }, [id])
+
+  const handleRegenerateSummary = async () => {
+    setGenerating(true)
+    setError('')
+    try {
+      const s = await generateMeetingSummary(id)
+      setSummary(s)
+    } catch (e) {
+      setError('Failed to regenerate summary: ' + e.message)
+    } finally {
+      setGenerating(false)
+    }
+  }
 
   const handleDownloadTxt = () => {
     if (!summary || !transcript) return
@@ -101,6 +135,9 @@ export default function PostMeetingSummaryPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" loading={generating} onClick={handleRegenerateSummary} disabled={loading || generating}>
+              🤖 {generating ? 'Generating…' : 'Regenerate AI'}
+            </Button>
             <Button variant="secondary" size="sm" onClick={handleDownloadTxt} disabled={loading}>
               ⬇ TXT
             </Button>
@@ -109,6 +146,13 @@ export default function PostMeetingSummaryPage() {
             </Button>
           </div>
         </div>
+
+        {generating && (
+          <div className="mb-6 p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-sm flex items-center gap-3">
+            <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+            <span>🤖 Ollama is analyzing your transcript and generating an AI summary. This may take 30–60 seconds…</span>
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm">

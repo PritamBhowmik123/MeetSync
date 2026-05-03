@@ -46,6 +46,15 @@ export default function ReportsPage() {
     ? Math.round(meetings.reduce((s, m) => s + (m.attendance ?? 0), 0) / meetings.length)
     : 0
 
+  // Normalize scheduled_at → scheduledAt for display
+  const normMeetings = filtered.map(m => ({
+    ...m,
+    scheduledAt: m.scheduledAt || m.scheduled_at,
+    participants: m.participants || [],
+    duration: m.duration || 0,
+  }))
+
+
   return (
     <PageLayout>
       <div className="max-w-7xl mx-auto px-6 py-8">
@@ -140,7 +149,7 @@ export default function ReportsPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {filtered.map(m => {
+                {normMeetings.map(m => {
                   const pct = m.attendance ?? 0
                   const isSelected = selected?.id === m.id
                   return (
@@ -161,7 +170,7 @@ export default function ReportsPage() {
                       </div>
                       <div className="flex items-center justify-between text-xs text-slate-500">
                         <span>{formatDate(m.scheduledAt)}</span>
-                        <span>{m.duration}m · {m.participants.length} people</span>
+                        <span>{m.duration > 0 ? `${m.duration}m · ` : ''}{m.participants.length} people</span>
                       </div>
                       <div className="mt-2 h-1 bg-[#2a2a3a] rounded-full overflow-hidden">
                         <div

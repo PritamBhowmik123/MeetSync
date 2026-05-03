@@ -9,6 +9,7 @@ import LiveCaptions from '../components/LiveCaptions'
 import ChatPanel from '../components/meeting/ChatPanel'
 import ParticipantList from '../components/meeting/ParticipantList'
 import { formatDuration } from '../utils/formatters'
+import { updateMeetingStatus, getMeetingById } from '../services/meetingService'
 
 export default function MeetingRoomPage() {
   const { id } = useParams()
@@ -44,11 +45,18 @@ export default function MeetingRoomPage() {
 
   const [faceResult, setFaceResult] = useState(null)
   const [isFaceProcessing, setIsFaceProcessing] = useState(false)
+  const [meetingDetails, setMeetingDetails] = useState(null)
 
-  const title = state?.title || meetingTitle || 'Team Meeting'
+  const title = meetingDetails?.title || state?.title || meetingTitle || 'Team Meeting'
+  const meetingCode = meetingDetails?.code || state?.code
 
   // Boot meeting
   useEffect(() => {
+    // Fetch real meeting details from DB
+    getMeetingById(id)
+      .then(data => setMeetingDetails(data))
+      .catch(err => console.warn('Failed to load meeting details:', err))
+      
     joinMeeting(id, title, state?.isHost ?? true)
     return () => { reset() }
   }, [id])
@@ -105,9 +113,13 @@ export default function MeetingRoomPage() {
 
             setIsFaceProcessing(true);
             try {
+              const token = localStorage.getItem('ms_token');
               const res = await fetch('http://localhost:5000/api/face/recognize', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
                 body: JSON.stringify({ image: base64Image })
               });
               const data = await res.json();
@@ -127,8 +139,10 @@ export default function MeetingRoomPage() {
     return () => clearInterval(interval);
   }, [isJoined, localStream, isFaceProcessing]);
 
-  const handleLeave = () => {
-    leave()
+  const handleLeave = async () => {
+    await leave()
+    // Mark meeting as completed if user is host
+    try { await updateMeetingStatus(id, 'completed') } catch (_) {}
     navigate(`/summary/${id}`, { state: { title } })
   }
 
@@ -147,8 +161,8 @@ export default function MeetingRoomPage() {
   }
 
   // Build participant list for grid
-  const streamEntries = Object.entries(remoteStreams)
-  const totalCount = 1 + streamEntries.length
+  const remoteParticipants = participants.filter(p => p.id !== 'local')
+  const totalCount = 1 + remoteParticipants.length
   const gridCount = Math.min(totalCount, 6)
 
   const sidebarContent = {
@@ -167,6 +181,11 @@ export default function MeetingRoomPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
             LIVE
           </span>
+          {meetingCode && (
+            <div className="ml-2 px-2.5 py-0.5 rounded-md bg-[#1c1c28] border border-[#2a2a3a] text-xs font-mono text-slate-400 flex items-center gap-2">
+              Code: <span className="text-indigo-400 font-bold select-all">{meetingCode}</span>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-4">
@@ -226,19 +245,16 @@ export default function MeetingRoomPage() {
               />
 
               {/* Remote videos */}
-              {streamEntries.map(([peerId, stream]) => {
-                const participant = participants.find(p => p.id === peerId)
-                return (
-                  <VideoTile
-                    key={peerId}
-                    stream={stream}
-                    name={participant?.name || peerId}
-                    peerId={peerId}
-                    isMuted={participant?.isMuted}
-                    isCameraOff={participant?.isCameraOff}
-                  />
-                )
-              })}
+              {remoteParticipants.map(participant => (
+                <VideoTile
+                  key={participant.id}
+                  stream={participant.stream || remoteStreams[participant.id]}
+                  name={participant.name}
+                  peerId={participant.id}
+                  isMuted={participant.isMuted}
+                  isCameraOff={participant.isCameraOff}
+                />
+              ))}
             </div>
           )}
           

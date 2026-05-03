@@ -1,25 +1,53 @@
-import { delay } from './api'
+import { apiRequest } from './api';
 
 export async function markAttendance(meetingId, userId) {
-  await delay(300)
-  return { marked: true, timestamp: new Date().toISOString(), confidence: Math.floor(Math.random() * 10 + 90) }
+  if (!meetingId || !userId) return;
+  try {
+    return await apiRequest('/api/attendance', {
+      method: 'POST',
+      body: JSON.stringify({ meeting_id: meetingId, user_id: userId }),
+    });
+  } catch (e) {
+    console.warn('Failed to mark attendance:', e.message);
+  }
+}
+
+export async function markLeave(meetingId, userId) {
+  if (!meetingId || !userId) return;
+  try {
+    return await apiRequest('/api/attendance/leave', {
+      method: 'PATCH',
+      body: JSON.stringify({ meeting_id: meetingId, user_id: userId }),
+    });
+  } catch (e) {
+    console.warn('Failed to mark leave:', e.message);
+  }
 }
 
 export async function getAttendanceReport(meetingId) {
-  await delay(600)
-  return [
-    { id: 'usr_1', name: 'Alex Johnson', role: 'Host', joinCount: 1, leaveCount: 0, totalTime: '47:32', percentage: 100, status: 'present' },
-    { id: 'usr_2', name: 'Sarah Chen', role: 'Participant', joinCount: 1, leaveCount: 0, totalTime: '45:10', percentage: 95, status: 'present' },
-    { id: 'usr_3', name: 'Mark Williams', role: 'Participant', joinCount: 2, leaveCount: 1, totalTime: '38:22', percentage: 81, status: 'present' },
-    { id: 'usr_4', name: 'Priya Patel', role: 'Participant', joinCount: 1, leaveCount: 0, totalTime: '47:32', percentage: 100, status: 'present' },
-    { id: 'usr_5', name: 'James Kim', role: 'Participant', joinCount: 1, leaveCount: 1, totalTime: '22:14', percentage: 47, status: 'partial' },
-    { id: 'usr_6', name: 'Laura Reyes', role: 'Participant', joinCount: 0, leaveCount: 0, totalTime: '0:00', percentage: 0, status: 'absent' },
-  ]
+  try {
+    return await apiRequest(`/api/attendance/${meetingId}`);
+  } catch (e) {
+    console.warn('Failed to fetch attendance report:', e.message);
+    return [];
+  }
 }
 
-export async function runFaceRecognition(meetingId, frame) {
-  await delay(800)
-  const names = ['Alex Johnson', 'Sarah Chen', 'Mark Williams', 'Priya Patel']
-  const recognized = names.slice(0, Math.floor(Math.random() * 3 + 2))
-  return { recognized, confidence: Math.floor(Math.random() * 10 + 88) }
+// Legacy compatibility — runFaceRecognition now just calls the face endpoint
+export async function runFaceRecognition(meetingId, imageBase64) {
+  if (!imageBase64) return { recognized: [], confidence: 0 };
+  try {
+    const result = await apiRequest('/api/face/recognize', {
+      method: 'POST',
+      body: JSON.stringify({ image: imageBase64 }),
+    });
+    return {
+      recognized: result.matched ? [result.user_name || `User ${result.user_id}`] : [],
+      confidence: Math.round((result.confidence || 0) * 100),
+      user_id: result.user_id,
+    };
+  } catch (e) {
+    console.warn('Face recognition failed:', e.message);
+    return { recognized: [], confidence: 0 };
+  }
 }

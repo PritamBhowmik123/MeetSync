@@ -14,8 +14,9 @@ export default function VideoTile({ stream, name, peerId, isLocal = false, isMut
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream
+      videoRef.current.muted = isLocal
     }
-  }, [stream])
+  }, [stream, isLocal])
 
   return (
     <div

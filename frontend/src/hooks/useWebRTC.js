@@ -1,8 +1,17 @@
-import { useEffect, useRef, useCallback } from 'react'
-import { useMeetingStore } from '../store/meetingStore'
+import { useEffect, useRef, useCallback } from 'react';
+import { useMeetingStore } from '../store/meetingStore';
 
-const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ],
+};
 
+/**
+ * Real WebRTC hook — manages peer connections via Socket.io signaling.
+ * All mock peers and canvas streams removed.
+ */
 export function useWebRTC(meetingId) {
   const {
     setLocalStream,
@@ -11,168 +20,206 @@ export function useWebRTC(meetingId) {
     setSpeaking,
     isMicOn,
     isCameraOn,
-  } = useMeetingStore()
+  } = useMeetingStore();
 
-  const localStreamRef = useRef(null)
-  const peersRef = useRef({})   // { peerId: RTCPeerConnection }
-  const audioContextRef = useRef(null)
-  const analyserRef = useRef(null)
-  const speakingRef = useRef(false)
+  const localStreamRef = useRef(null);
+  const peersRef = useRef({});          // { socketId: RTCPeerConnection }
+  const peerUsersRef = useRef({});      // { socketId: { userId, userName } }
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const speakingRef = useRef(false);
 
-  // Start local media capture
+  // ── Local Media ────────────────────────────────────────────────────────────
   const startLocalStream = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 1280, height: 720, facingMode: 'user' },
         audio: { echoCancellation: true, noiseSuppression: true },
-      })
-      localStreamRef.current = stream
-      setLocalStream(stream)
-      setupAudioAnalyser(stream)
-      return stream
+      });
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      setupAudioAnalyser(stream);
+      return stream;
     } catch (err) {
-      console.warn('getUserMedia failed, using mock stream:', err.message)
-      const mockStream = createMockStream()
-      localStreamRef.current = mockStream
-      setLocalStream(mockStream)
-      return mockStream
+      console.warn('getUserMedia failed:', err.message);
+      // Return empty MediaStream so the app still works (video tile shows placeholder)
+      const emptyStream = new MediaStream();
+      localStreamRef.current = emptyStream;
+      setLocalStream(emptyStream);
+      return emptyStream;
     }
-  }, [setLocalStream])
+  }, [setLocalStream]);
 
-  // Mock stream for environments without camera
-  const createMockStream = () => {
-    try {
-      const canvas = document.createElement('canvas')
-      canvas.width = 640; canvas.height = 480
-      const ctx = canvas.getContext('2d')
-      const draw = () => {
-        const hue = (Date.now() / 50) % 360
-        ctx.fillStyle = `hsl(${hue}, 40%, 15%)`
-        ctx.fillRect(0, 0, 640, 480)
-        ctx.fillStyle = `hsl(${hue}, 60%, 60%)`
-        ctx.font = 'bold 24px Inter, sans-serif'
-        ctx.textAlign = 'center'
-        ctx.fillText('📷 Camera Unavailable', 320, 240)
-        requestAnimationFrame(draw)
-      }
-      draw()
-      const stream = canvas.captureStream(15)
-      // Add silent audio track
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-      const dest = audioCtx.createMediaStreamDestination()
-      stream.addTrack(dest.stream.getTracks()[0])
-      return stream
-    } catch {
-      return new MediaStream([])
-    }
-  }
-
-  // Audio analyser for speaking detection
+  // ── Audio Analyser (speaking detection) ───────────────────────────────────
   const setupAudioAnalyser = (stream) => {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)()
-      const source = ctx.createMediaStreamSource(stream)
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 512
-      source.connect(analyser)
-      audioContextRef.current = ctx
-      analyserRef.current = analyser
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      audioContextRef.current = ctx;
+      analyserRef.current = analyser;
 
-      const data = new Uint8Array(analyser.frequencyBinCount)
+      const data = new Uint8Array(analyser.frequencyBinCount);
       const detect = () => {
-        analyser.getByteFrequencyData(data)
-        const avg = data.reduce((a, b) => a + b, 0) / data.length
-        const isSpeaking = avg > 15
+        if (!analyserRef.current) return;
+        analyser.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        const isSpeaking = avg > 15;
         if (isSpeaking !== speakingRef.current) {
-          speakingRef.current = isSpeaking
-          setSpeaking('local', isSpeaking)
+          speakingRef.current = isSpeaking;
+          setSpeaking('local', isSpeaking);
         }
-        requestAnimationFrame(detect)
-      }
-      detect()
+        requestAnimationFrame(detect);
+      };
+      detect();
     } catch (e) {
-      console.warn('Audio analyser setup failed:', e)
+      console.warn('Audio analyser setup failed:', e);
     }
-  }
+  };
 
-  // Screen share
-  const startScreenShare = useCallback(async () => {
-    try {
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true })
-      const videoTrack = screenStream.getVideoTracks()[0]
-      // Replace video track in all peer connections
-      Object.values(peersRef.current).forEach(pc => {
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video')
-        sender?.replaceTrack(videoTrack)
-      })
-      videoTrack.onended = () => stopScreenShare()
-      return screenStream
-    } catch (err) {
-      throw new Error('Screen share cancelled or not supported')
+  // ── Create Peer Connection ─────────────────────────────────────────────────
+  const createPeerConnection = useCallback((socketId, userInfo, emit) => {
+    if (peersRef.current[socketId]) return peersRef.current[socketId];
+
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    peersRef.current[socketId] = pc;
+    peerUsersRef.current[socketId] = userInfo;
+
+    // Add local tracks
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => {
+        pc.addTrack(track, localStreamRef.current);
+      });
     }
-  }, [])
+
+    // Remote stream handler
+    const remoteStream = new MediaStream();
+    pc.ontrack = (event) => {
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach(track => {
+          if (!remoteStream.getTracks().includes(track)) remoteStream.addTrack(track);
+        });
+      } else {
+        if (!remoteStream.getTracks().includes(event.track)) remoteStream.addTrack(event.track);
+      }
+      addRemoteStream(socketId, remoteStream, userInfo?.userName || socketId);
+    };
+
+    // ICE candidates
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        emit('ice-candidate', { to: socketId, candidate: event.candidate });
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log(`[WebRTC] Peer ${socketId} state: ${pc.connectionState}`);
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        closePeer(socketId);
+      }
+    };
+
+    return pc;
+  }, [addRemoteStream]);
+
+  // ── Initiate Call (caller side) ───────────────────────────────────────────
+  const callPeer = useCallback(async (socketId, userInfo, emit) => {
+    const pc = createPeerConnection(socketId, userInfo, emit);
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      emit('offer', { to: socketId, offer });
+      console.log('[WebRTC] Sent offer to', socketId);
+    } catch (err) {
+      console.error('[WebRTC] Failed to create offer:', err);
+    }
+  }, [createPeerConnection]);
+
+  // ── Handle Incoming Offer (callee side) ───────────────────────────────────
+  const handleOffer = useCallback(async ({ from, fromUser, offer }, emit) => {
+    const pc = createPeerConnection(from, fromUser, emit);
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      emit('answer', { to: from, answer });
+      console.log('[WebRTC] Sent answer to', from);
+    } catch (err) {
+      console.error('[WebRTC] Failed to handle offer:', err);
+    }
+  }, [createPeerConnection]);
+
+  // ── Handle Incoming Answer ─────────────────────────────────────────────────
+  const handleAnswer = useCallback(async ({ from, answer }) => {
+    const pc = peersRef.current[from];
+    if (!pc) return;
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      console.log('[WebRTC] Set remote answer from', from);
+    } catch (err) {
+      console.error('[WebRTC] Failed to set remote answer:', err);
+    }
+  }, []);
+
+  // ── Handle ICE Candidate ───────────────────────────────────────────────────
+  const handleIceCandidate = useCallback(async ({ from, candidate }) => {
+    const pc = peersRef.current[from];
+    if (!pc || !candidate) return;
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (err) {
+      console.warn('[WebRTC] Failed to add ICE candidate:', err);
+    }
+  }, []);
+
+  // ── Close a single peer ───────────────────────────────────────────────────
+  const closePeer = useCallback((socketId) => {
+    peersRef.current[socketId]?.close();
+    delete peersRef.current[socketId];
+    delete peerUsersRef.current[socketId];
+    removeRemoteStream(socketId);
+  }, [removeRemoteStream]);
+
+  // ── Screen Share ──────────────────────────────────────────────────────────
+  const startScreenShare = useCallback(async () => {
+    const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    const videoTrack = screenStream.getVideoTracks()[0];
+    Object.values(peersRef.current).forEach(pc => {
+      const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+      sender?.replaceTrack(videoTrack);
+    });
+    videoTrack.onended = () => stopScreenShare();
+    return screenStream;
+  }, []);
 
   const stopScreenShare = useCallback(() => {
     if (localStreamRef.current) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0]
-      Object.values(peersRef.current).forEach(pc => {
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video')
-        sender?.replaceTrack(videoTrack)
-      })
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        Object.values(peersRef.current).forEach(pc => {
+          const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+          sender?.replaceTrack(videoTrack);
+        });
+      }
     }
-  }, [])
+  }, []);
 
-  // Add mock remote peers for demo
-  const addMockPeers = useCallback(() => {
-    const mockPeers = [
-      { id: 'peer_1', name: 'Sarah Chen' },
-      { id: 'peer_2', name: 'Mark Williams' },
-      { id: 'peer_3', name: 'Priya Patel' },
-    ]
-    mockPeers.forEach(({ id, name }, i) => {
-      setTimeout(() => {
-        const canvas = document.createElement('canvas')
-        canvas.width = 640; canvas.height = 480
-        const ctx = canvas.getContext('2d')
-        const colors = ['#6366f1', '#10b981', '#f59e0b']
-        const draw = () => {
-          ctx.fillStyle = '#111118'
-          ctx.fillRect(0, 0, 640, 480)
-          ctx.fillStyle = colors[i % colors.length] + '33'
-          ctx.fillRect(0, 0, 640, 480)
-          ctx.fillStyle = colors[i % colors.length]
-          ctx.font = 'bold 64px Inter'
-          ctx.textAlign = 'center'
-          ctx.fillText(name.charAt(0), 320, 260)
-          ctx.fillStyle = '#94a3b8'
-          ctx.font = '20px Inter'
-          ctx.fillText(name, 320, 310)
-          requestAnimationFrame(draw)
-        }
-        draw()
-        const mockStream = canvas.captureStream(10)
-        addRemoteStream(id, mockStream, name)
-
-        // Simulate random speaking
-        setInterval(() => {
-          const speaking = Math.random() > 0.75
-          setSpeaking(id, speaking)
-        }, 2000 + i * 500)
-      }, (i + 1) * 1500)
-    })
-  }, [addRemoteStream, setSpeaking])
-
+  // ── Cleanup ───────────────────────────────────────────────────────────────
   const cleanup = useCallback(() => {
-    localStreamRef.current?.getTracks().forEach(t => t.stop())
-    Object.values(peersRef.current).forEach(pc => pc.close())
-    audioContextRef.current?.close()
-    peersRef.current = {}
-  }, [])
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
+    Object.keys(peersRef.current).forEach(id => peersRef.current[id]?.close());
+    audioContextRef.current?.close();
+    peersRef.current = {};
+    peerUsersRef.current = {};
+    analyserRef.current = null;
+    audioContextRef.current = null;
+  }, []);
 
-  // True hardware toggling for Camera
+  // ── Camera toggle (hardware) ───────────────────────────────────────────────
   useEffect(() => {
     if (!localStreamRef.current) return;
-    
     if (!isCameraOn) {
       localStreamRef.current.getVideoTracks().forEach(t => {
         t.stop();
@@ -185,7 +232,7 @@ export function useWebRTC(meetingId) {
             const newTrack = stream.getVideoTracks()[0];
             localStreamRef.current.addTrack(newTrack);
             Object.values(peersRef.current).forEach(pc => {
-              const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+              const sender = pc.getSenders().find(s => s.track?.kind === 'video');
               if (sender) sender.replaceTrack(newTrack);
             });
             const newStream = new MediaStream(localStreamRef.current.getTracks());
@@ -197,10 +244,9 @@ export function useWebRTC(meetingId) {
     }
   }, [isCameraOn, setLocalStream]);
 
-  // True hardware toggling for Mic
+  // ── Mic toggle (hardware) ─────────────────────────────────────────────────
   useEffect(() => {
     if (!localStreamRef.current) return;
-    
     if (!isMicOn) {
       localStreamRef.current.getAudioTracks().forEach(t => {
         t.stop();
@@ -213,7 +259,7 @@ export function useWebRTC(meetingId) {
             const newTrack = stream.getAudioTracks()[0];
             localStreamRef.current.addTrack(newTrack);
             Object.values(peersRef.current).forEach(pc => {
-              const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+              const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
               if (sender) sender.replaceTrack(newTrack);
             });
             const newStream = new MediaStream(localStreamRef.current.getTracks());
@@ -225,5 +271,16 @@ export function useWebRTC(meetingId) {
     }
   }, [isMicOn, setLocalStream]);
 
-  return { startLocalStream, startScreenShare, stopScreenShare, addMockPeers, cleanup }
+  return {
+    startLocalStream,
+    startScreenShare,
+    stopScreenShare,
+    callPeer,
+    handleOffer,
+    handleAnswer,
+    handleIceCandidate,
+    closePeer,
+    cleanup,
+    peersRef,
+  };
 }

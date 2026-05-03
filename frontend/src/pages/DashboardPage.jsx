@@ -52,7 +52,7 @@ export default function DashboardPage() {
     setCreating(true); setModalError('')
     try {
       const meeting = await createMeeting(newTitle.trim(), new Date().toISOString())
-      navigate(`/meeting/${meeting.id}`, { state: { title: meeting.title, isHost: true } })
+      navigate(`/meeting/${meeting.id}`, { state: { title: meeting.title, isHost: true, code: meeting.code } })
     } catch (e) { setModalError(e.message) } finally { setCreating(false) }
   }
 
@@ -61,7 +61,7 @@ export default function DashboardPage() {
     setJoining(true); setModalError('')
     try {
       const meeting = await joinMeetingByCode(joinCode.trim().toUpperCase())
-      navigate(`/meeting/${meeting.id}`, { state: { title: meeting.title, isHost: false } })
+      navigate(`/meeting/${meeting.id}`, { state: { title: meeting.title, isHost: false, code: meeting.code } })
     } catch (e) { setModalError(e.message) } finally { setJoining(false) }
   }
 

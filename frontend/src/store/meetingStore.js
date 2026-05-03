@@ -49,12 +49,15 @@ export const useMeetingStore = create((set, get) => ({
   setLocalStream: (stream) => set({ localStream: stream }),
 
   addRemoteStream: (peerId, stream, name) =>
-    set((s) => ({
-      remoteStreams: { ...s.remoteStreams, [peerId]: stream },
-      participants: s.participants.find(p => p.id === peerId)
-        ? s.participants
-        : [...s.participants, { id: peerId, name, stream, isMuted: false, isCameraOff: false }],
-    })),
+    set((s) => {
+      const existing = s.participants.find(p => p.id === peerId);
+      return {
+        remoteStreams: { ...s.remoteStreams, [peerId]: stream },
+        participants: existing
+          ? s.participants.map(p => p.id === peerId ? { ...p, stream, name } : p)
+          : [...s.participants, { id: peerId, name, stream, isMuted: false, isCameraOff: false }],
+      };
+    }),
 
   removeRemoteStream: (peerId) =>
     set((s) => {
@@ -62,6 +65,22 @@ export const useMeetingStore = create((set, get) => ({
       return {
         remoteStreams: rest,
         participants: s.participants.filter(p => p.id !== peerId),
+      }
+    }),
+
+  updateParticipantMedia: (peerId, { isMuted, isCameraOff }) =>
+    set((s) => {
+      const existing = s.participants.find(p => p.id === peerId);
+      if (existing) {
+        return {
+          participants: s.participants.map(p => 
+            p.id === peerId ? { ...p, isMuted: isMuted ?? p.isMuted, isCameraOff: isCameraOff ?? p.isCameraOff } : p
+          )
+        };
+      } else {
+        return {
+          participants: [...s.participants, { id: peerId, name: peerId, stream: null, isMuted: isMuted ?? false, isCameraOff: isCameraOff ?? false }]
+        };
       }
     }),
 
@@ -115,6 +134,8 @@ export const useMeetingStore = create((set, get) => ({
       remoteStreams: {},
       speakingPeers: new Set(),
       participants: [],
+      isMicOn: true,
+      isCameraOn: true,
     }),
 
   reset: () =>
