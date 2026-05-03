@@ -148,10 +148,35 @@ io.on('connection', (socket) => {
     });
   });
 
+  // ── User Identity Update ───────────────────────────────────────────────
+  socket.on('update-user', ({ meetingId, userId, userName, isMuted, isCameraOff }) => {
+    const room = String(meetingId);
+    if (!rooms.has(room) || !rooms.get(room).has(socket.id)) return;
+
+    const userState = rooms.get(room).get(socket.id);
+    userState.userId = userId ?? userState.userId;
+    userState.userName = userName || userState.userName;
+    if (typeof isMuted === 'boolean') userState.isMuted = isMuted;
+    if (typeof isCameraOff === 'boolean') userState.isCameraOff = isCameraOff;
+
+    socket.to(room).emit('user-updated', {
+      socketId: socket.id,
+      userId: userState.userId,
+      userName: userState.userName,
+      isMuted: userState.isMuted,
+      isCameraOff: userState.isCameraOff,
+    });
+  });
+
   // ── Captions ───────────────────────────────────────────────────────────────
   socket.on('caption', ({ meetingId, caption }) => {
-    socket.to(String(meetingId)).emit('caption', {
+    const room = String(meetingId);
+    const userState = rooms.get(room)?.get(socket.id);
+    socket.to(room).emit('caption', {
       ...caption,
+      speaker: userState
+        ? { id: userState.userId || socket.id, name: userState.userName || 'Guest' }
+        : caption.speaker,
       fromSocket: socket.id
     });
   });

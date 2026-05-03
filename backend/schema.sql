@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS transcripts (
   meeting_id INTEGER REFERENCES meetings(id) ON DELETE CASCADE,
   user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
   text       TEXT NOT NULL,
-  timestamp  TIMESTAMPTZ DEFAULT NOW()
+  timestamp  TIMESTAMPTZ DEFAULT NOW(),
+  timestamp_ist TIMESTAMP
 );
 
 -- ============================================================

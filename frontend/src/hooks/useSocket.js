@@ -32,20 +32,24 @@ export function useSocket(meetingId, callbacks = {}) {
 
     socket.on('connect', () => {
       console.log('[Socket] Connected:', socket.id);
+      callbacksRef.current?.onConnect?.(socket);
     });
 
     socket.on('connect_error', (err) => {
       console.warn('[Socket] Connection error:', err.message);
+      callbacksRef.current?.onConnectError?.(err);
     });
 
     socket.on('disconnect', (reason) => {
       console.log('[Socket] Disconnected:', reason);
+      callbacksRef.current?.onDisconnect?.(reason);
     });
 
     // Expose all incoming events via callbacks
     socket.on('room-peers', (peers) => callbacksRef.current?.onRoomPeers?.(peers));
     socket.on('user-joined', (data) => callbacksRef.current?.onUserJoined?.(data));
     socket.on('user-left', (data) => callbacksRef.current?.onUserLeft?.(data));
+    socket.on('user-updated', (data) => callbacksRef.current?.onUserUpdated?.(data));
     socket.on('offer', (data) => callbacksRef.current?.onOffer?.(data));
     socket.on('answer', (data) => callbacksRef.current?.onAnswer?.(data));
     socket.on('ice-candidate', (data) => callbacksRef.current?.onIceCandidate?.(data));

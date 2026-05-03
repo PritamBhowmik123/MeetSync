@@ -53,7 +53,7 @@ export const useMeetingStore = create((set, get) => ({
       const existing = s.participants.find(p => p.id === peerId);
       // Logic: Prefer a new name if it's specific (not Guest/socketId). Otherwise keep existing name.
       const isNewNameValid = name && name !== peerId && name !== 'Guest';
-      const updatedName = isNewNameValid ? name : (existing?.name || name || peerId);
+      const updatedName = isNewNameValid ? name : (existing?.name || name || 'Guest');
       
       return {
         remoteStreams: { ...s.remoteStreams, [peerId]: stream },
@@ -76,7 +76,7 @@ export const useMeetingStore = create((set, get) => ({
     set((s) => {
       const existing = s.participants.find(p => p.id === peerId);
       const isNewNameValid = name && name !== peerId && name !== 'Guest';
-      const updatedName = isNewNameValid ? name : (existing?.name || peerId);
+      const updatedName = isNewNameValid ? name : (existing?.name || 'Guest');
       
       if (existing) {
         return {
@@ -112,7 +112,7 @@ export const useMeetingStore = create((set, get) => ({
   addCaption: (caption) =>
     set((s) => ({
       captions: [...s.captions.slice(-50), caption],
-      transcript: [...s.transcript, { ...caption, timestamp: new Date().toISOString() }],
+      transcript: [...s.transcript, { ...caption, timestamp: caption?.timestamp || new Date().toISOString() }],
     })),
 
   addMessage: (msg) =>

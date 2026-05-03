@@ -13,8 +13,16 @@ export function formatDate(iso) {
 }
 
 export function formatTime(iso) {
-  return new Date(iso).toLocaleTimeString('en-US', {
+  let value = iso
+  if (typeof value === 'string') {
+    const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value)
+    if (!hasTz) {
+      value = value.replace(' ', 'T') + 'Z'
+    }
+  }
+  return new Date(value).toLocaleTimeString('en-IN', {
     hour: '2-digit', minute: '2-digit',
+    timeZone: 'Asia/Kolkata',
   })
 }
 

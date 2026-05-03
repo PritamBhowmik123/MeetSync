@@ -94,7 +94,7 @@ export default function PostMeetingSummaryPage() {
       ...summary.actionItems.map(a => `• [${a.owner}] ${a.task} (Due: ${a.due})`),
       '',
       '=== FULL TRANSCRIPT ===',
-      ...transcript.map(t => `[${formatTime(t.timestamp)}] ${t.speaker}: ${t.text}`),
+      ...transcript.map(t => `[${formatTime(t.timestamp_ist || t.timestamp)}] ${t.speaker}: ${t.text}`),
     ]
     const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
@@ -299,7 +299,7 @@ function TranscriptTab({ transcript, loading }) {
         {transcript.map((line) => (
           <div key={line.id} className="flex gap-4 px-5 py-3.5 hover:bg-[#1c1c28] transition-colors">
             <span className="text-xs text-slate-600 font-mono w-14 flex-shrink-0 pt-0.5">
-              {formatTime(line.timestamp)}
+              {formatTime(line.timestamp_ist || line.timestamp)}
             </span>
             <div className="flex gap-2.5 flex-1 min-w-0">
               <Avatar name={line.speaker} size="xs" className="flex-shrink-0 mt-0.5" />

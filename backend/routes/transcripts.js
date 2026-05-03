@@ -14,9 +14,10 @@ router.post('/', verifyToken, async (req, res) => {
   }
   try {
     const result = await pool.query(
-      `INSERT INTO transcripts (meeting_id, user_id, text, timestamp)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [meeting_id, user_id, text.trim(), timestamp || new Date().toISOString()]
+      `INSERT INTO transcripts (meeting_id, user_id, text, timestamp, timestamp_ist)
+       VALUES ($1, $2, $3, NOW(), NOW() AT TIME ZONE 'Asia/Kolkata')
+       RETURNING *`,
+      [meeting_id, user_id, text.trim()]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -29,7 +30,13 @@ router.post('/', verifyToken, async (req, res) => {
 router.get('/:meetingId', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT t.*, u.name as speaker_name
+      `SELECT
+        t.*,
+        u.name as speaker_name,
+        COALESCE(
+          to_char(t.timestamp_ist, 'YYYY-MM-DD"T"HH24:MI:SS.MS') || '+05:30',
+          to_char(t.timestamp AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS.MS') || '+05:30'
+        ) as timestamp_ist
        FROM transcripts t
        LEFT JOIN users u ON t.user_id = u.id
        WHERE t.meeting_id = $1
@@ -41,6 +48,7 @@ router.get('/:meetingId', verifyToken, async (req, res) => {
       speaker: row.speaker_name || 'Unknown',
       text: row.text,
       timestamp: row.timestamp,
+      timestamp_ist: row.timestamp_ist,
       user_id: row.user_id,
     })));
   } catch (err) {

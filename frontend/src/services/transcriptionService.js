@@ -3,7 +3,7 @@ import { apiRequest } from './api';
 /**
  * Save a single transcript chunk to the backend.
  */
-export async function saveTranscriptChunk(meetingId, userId, text) {
+export async function saveTranscriptChunk(meetingId, userId, text, timestamp) {
   if (!meetingId || !text?.trim()) return;
   try {
     return await apiRequest('/api/transcripts', {
@@ -12,7 +12,7 @@ export async function saveTranscriptChunk(meetingId, userId, text) {
         meeting_id: meetingId,
         user_id: userId,
         text: text.trim(),
-        timestamp: new Date().toISOString(),
+        timestamp: timestamp || new Date().toISOString(),
       }),
     });
   } catch (e) {
@@ -61,6 +61,7 @@ export function startCaptionStream(onCaption, speakerName = 'You') {
           speaker: { id: 'local', name: speakerName },
           text: result[0].transcript.trim(),
           final: true,
+          timestamp: new Date().toISOString(),
         });
       } else {
         interim += result[0].transcript;
@@ -71,6 +72,7 @@ export function startCaptionStream(onCaption, speakerName = 'You') {
         speaker: { id: 'local', name: speakerName },
         text: interim,
         final: false,
+        timestamp: new Date().toISOString(),
       });
     }
   };
