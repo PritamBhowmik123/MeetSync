@@ -263,7 +263,10 @@ export default function MeetingRoomPage() {
                   peerId={participant.id}
                   isMuted={participant.isMuted}
                   isCameraOff={participant.isCameraOff}
-                  forceMuted={participant.userId && participant.userId === user?.id}
+                  forceMuted={
+                    (participant.userId && participant.userId === user?.id) ||
+                    (!participant.userId && participant.name && user?.name && participant.name.toLowerCase() === user.name.toLowerCase())
+                  }
                 />
               ))}
             </div>

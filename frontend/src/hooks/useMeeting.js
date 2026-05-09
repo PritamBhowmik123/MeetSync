@@ -225,6 +225,22 @@ export function useMeeting(meetingId) {
     }
   }, [isMicOn, isJoined, startCaptions]);
 
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!isJoined) return;
+      if (document.hidden) {
+        captionStopRef.current?.();
+        clearInterval(transcriptTimerRef.current);
+        captionsRunningRef.current = false;
+      } else if (isMicOn) {
+        startCaptions();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [isJoined, isMicOn, startCaptions]);
+
   // ── Leave meeting ─────────────────────────────────────────────────────────
   const leave = useCallback(async () => {
     try {
