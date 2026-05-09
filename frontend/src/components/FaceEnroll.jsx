@@ -1,5 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
+import { registerStream, unregisterStream } from '../utils/mediaRegistry';
 
 export default function FaceEnroll() {
   const { user } = useAuthStore();
@@ -14,6 +15,7 @@ export default function FaceEnroll() {
   const startVideo = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      registerStream(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         setStreamActive(true);
@@ -29,6 +31,7 @@ export default function FaceEnroll() {
     if (videoRef.current && videoRef.current.srcObject) {
       const tracks = videoRef.current.srcObject.getTracks();
       tracks.forEach(track => track.stop());
+      unregisterStream(videoRef.current.srcObject);
       videoRef.current.srcObject = null;
       setStreamActive(false);
     }

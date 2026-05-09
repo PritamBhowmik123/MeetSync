@@ -1,5 +1,8 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { useMeetingStore } from '../store/meetingStore'
+import { stopAllStreams } from '../utils/mediaRegistry'
 import LoginPage from '../pages/LoginPage'
 import SignupPage from '../pages/SignupPage'
 import DashboardPage from '../pages/DashboardPage'
@@ -19,6 +22,20 @@ const PublicRoute = ({ children }) => {
 }
 
 export default function AppRoutes() {
+  const location = useLocation()
+  const { stopActiveTracks, leaveMeeting } = useMeetingStore()
+
+  useEffect(() => {
+    // Safety: never keep media active outside meeting routes.
+    const path = location.pathname
+    const allowMedia = path.startsWith('/meeting/') || path === '/face-enroll' || path === '/face-recognize'
+    if (!allowMedia) {
+      stopAllStreams()
+      stopActiveTracks()
+      leaveMeeting()
+    }
+  }, [location.pathname, stopActiveTracks, leaveMeeting, stopAllStreams])
+
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

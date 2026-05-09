@@ -36,51 +36,11 @@ export function useMeeting(meetingId) {
   const captionStopRef = useRef(null);
   const transcriptBatchRef = useRef([]);
   const transcriptTimerRef = useRef(null);
-  const captionLockTimerRef = useRef(null);
+  const captionsRunningRef = useRef(false);
   const localReadyRef = useRef(false);
   const pendingPeersRef = useRef([]);
   const joinRequestedRef = useRef(false);
   const joinedRoomRef = useRef(false);
-  const tabIdRef = useRef(
-    (globalThis.crypto && globalThis.crypto.randomUUID)
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
-
-  const CAPTION_LOCK_KEY = 'ms_caption_owner';
-  const CAPTION_LOCK_TTL = 8000;
-
-  const readCaptionLock = () => {
-    try {
-      const raw = localStorage.getItem(CAPTION_LOCK_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const writeCaptionLock = (micOn = true) => {
-    const payload = { id: tabIdRef.current, ts: Date.now(), micOn };
-    localStorage.setItem(CAPTION_LOCK_KEY, JSON.stringify(payload));
-  };
-
-  const releaseCaptionLock = () => {
-    const lock = readCaptionLock();
-    if (lock?.id === tabIdRef.current) {
-      localStorage.removeItem(CAPTION_LOCK_KEY);
-    }
-  };
-
-  const tryAcquireCaptionLock = () => {
-    const lock = readCaptionLock();
-    const isStale = !lock || (Date.now() - lock.ts > CAPTION_LOCK_TTL);
-    const canSteal = lock && lock.micOn === false;
-    if (isStale || canSteal || lock.id === tabIdRef.current) {
-      writeCaptionLock(true);
-      return true;
-    }
-    return false;
-  };
 
   // ── Socket callbacks (defined as stable refs) ─────────────────────────────
   const socketCallbacks = useRef({});
@@ -122,7 +82,8 @@ export function useMeeting(meetingId) {
           updateParticipantMedia(peer.socketId, { 
             isMuted: peer.isMuted, 
             isCameraOff: peer.isCameraOff, 
-            name: peer.userName 
+            name: peer.userName,
+            userId: peer.userId,
           });
           if (localReadyRef.current) {
             callPeer(peer.socketId, peer, emit);
@@ -133,14 +94,14 @@ export function useMeeting(meetingId) {
       },
       onUserJoined: ({ socketId, userId, userName, isMuted, isCameraOff }) => {
         console.log('[Meeting] User joined:', userName);
-        updateParticipantMedia(socketId, { isMuted, isCameraOff, name: userName });
+        updateParticipantMedia(socketId, { isMuted, isCameraOff, name: userName, userId });
       },
       onUserLeft: ({ socketId, userName }) => {
         console.log('[Meeting] User left:', userName);
         closePeer(socketId);
       },
-      onUserUpdated: ({ socketId, userName, isMuted, isCameraOff }) => {
-        updateParticipantMedia(socketId, { isMuted, isCameraOff, name: userName });
+      onUserUpdated: ({ socketId, userId, userName, isMuted, isCameraOff }) => {
+        updateParticipantMedia(socketId, { isMuted, isCameraOff, name: userName, userId });
       },
       onOffer: (data) => handleOffer(data, emit),
       onAnswer: (data) => handleAnswer(data),
@@ -197,17 +158,13 @@ export function useMeeting(meetingId) {
 
   // ── Start captions + transcript pipeline ─────────────────────────────────
   const startCaptions = useCallback(() => {
+    if (captionsRunningRef.current) return;
     // Stop any existing stream first
     captionStopRef.current?.();
     clearInterval(transcriptTimerRef.current);
-    clearInterval(captionLockTimerRef.current);
+    captionsRunningRef.current = false;
 
     if (!isMicOn) return;
-    if (!tryAcquireCaptionLock()) return;
-
-    captionLockTimerRef.current = setInterval(() => {
-      writeCaptionLock(true);
-    }, 3000);
     
     captionStopRef.current = startCaptionStream((caption) => {
       if (!isMicOn) return;
@@ -220,6 +177,7 @@ export function useMeeting(meetingId) {
     }, user?.name || 'You');
 
     transcriptTimerRef.current = setInterval(flushTranscripts, 10000);
+    captionsRunningRef.current = true;
   }, [addCaption, flushTranscripts, user?.name, emit, meetingId, isMicOn]);
 
   // ── Join meeting ──────────────────────────────────────────────────────────
@@ -249,10 +207,10 @@ export function useMeeting(meetingId) {
       await markAttendance(meetingId, user.id);
     }
 
+    await localPromise;
     if (isMicOn) {
       startCaptions();
     }
-    await localPromise;
   }, [startLocalStream, setJoined, emit, meetingId, user, startCaptions, isMicOn, isCameraOn, callPeer, socketRef]);
 
   // Pause/resume captions when mic is toggled
@@ -263,26 +221,28 @@ export function useMeeting(meetingId) {
     } else {
       captionStopRef.current?.();
       clearInterval(transcriptTimerRef.current);
-      clearInterval(captionLockTimerRef.current);
-      writeCaptionLock(false);
-      releaseCaptionLock();
+      captionsRunningRef.current = false;
     }
   }, [isMicOn, isJoined, startCaptions]);
 
   // ── Leave meeting ─────────────────────────────────────────────────────────
   const leave = useCallback(async () => {
-    captionStopRef.current?.();
-    clearInterval(transcriptTimerRef.current);
-    await flushTranscripts();
+    try {
+      captionStopRef.current?.();
+      clearInterval(transcriptTimerRef.current);
+      await flushTranscripts();
 
-    emit('leave-room', { meetingId });
+      emit('leave-room', { meetingId });
 
-    if (user?.id) {
-      await markLeave(meetingId, user.id);
+      if (user?.id) {
+        await markLeave(meetingId, user.id);
+      }
+    } catch (e) {
+      console.warn('Leave meeting cleanup issue:', e?.message || e);
+    } finally {
+      cleanup();
+      leaveMeeting();
     }
-
-    cleanup();
-    leaveMeeting();
   }, [cleanup, leaveMeeting, emit, meetingId, user, flushTranscripts]);
 
   // ── Cleanup on unmount ────────────────────────────────────────────────────
@@ -290,27 +250,28 @@ export function useMeeting(meetingId) {
     return () => {
       captionStopRef.current?.();
       clearInterval(transcriptTimerRef.current);
-      clearInterval(captionLockTimerRef.current);
-      releaseCaptionLock();
+      captionsRunningRef.current = false;
       cleanup();
       leaveMeeting();
     };
   }, [cleanup, leaveMeeting]);
 
   useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key !== CAPTION_LOCK_KEY) return;
-      const lock = readCaptionLock();
-      if (lock?.id && lock.id !== tabIdRef.current) {
-        captionStopRef.current?.();
-        clearInterval(transcriptTimerRef.current);
-        clearInterval(captionLockTimerRef.current);
-      }
+    const handlePageHide = () => {
+      captionStopRef.current?.();
+      clearInterval(transcriptTimerRef.current);
+      captionsRunningRef.current = false;
+      cleanup();
+      leaveMeeting();
     };
 
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handlePageHide);
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handlePageHide);
+    };
+  }, [cleanup, leaveMeeting]);
 
   return { join, leave, startScreenShare, stopScreenShare, sendMessage };
 }

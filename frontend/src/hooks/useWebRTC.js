@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useMeetingStore } from '../store/meetingStore';
+import { registerStream, unregisterStream } from '../utils/mediaRegistry';
 
 const ICE_SERVERS = {
   iceServers: [
@@ -23,6 +24,10 @@ export function useWebRTC(meetingId) {
   } = useMeetingStore();
 
   const localStreamRef = useRef(null);
+  const cameraTrackRef = useRef(null);
+  const micTrackRef = useRef(null);
+  const screenStreamRef = useRef(null);
+  const screenTrackRef = useRef(null);
   const peersRef = useRef({});          // { socketId: RTCPeerConnection }
   const peerUsersRef = useRef({});      // { socketId: { userId, userName } }
   const audioContextRef = useRef(null);
@@ -32,13 +37,38 @@ export function useWebRTC(meetingId) {
   // ── Local Media ────────────────────────────────────────────────────────────
   const startLocalStream = useCallback(async () => {
     try {
+      if (localStreamRef.current) {
+        unregisterStream(localStreamRef.current);
+        localStreamRef.current.getTracks().forEach(t => t.stop());
+        localStreamRef.current = null;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 1280, height: 720, facingMode: 'user' },
         audio: { echoCancellation: true, noiseSuppression: true },
       });
+      registerStream(stream);
+      stream.getAudioTracks().forEach(track => {
+        track.enabled = isMicOn;
+        micTrackRef.current = track;
+      });
+      stream.getVideoTracks().forEach(track => {
+        track.enabled = isCameraOn;
+        cameraTrackRef.current = track;
+      });
       localStreamRef.current = stream;
       setLocalStream(stream);
       setupAudioAnalyser(stream);
+      // Attach or replace tracks on any existing peers.
+      Object.values(peersRef.current).forEach(pc => {
+        stream.getTracks().forEach(track => {
+          const sender = pc.getSenders().find(s => s.track?.kind === track.kind);
+          if (sender) {
+            sender.replaceTrack(track);
+          } else {
+            pc.addTrack(track, stream);
+          }
+        });
+      });
       return stream;
     } catch (err) {
       console.warn('getUserMedia failed:', err.message);
@@ -48,7 +78,7 @@ export function useWebRTC(meetingId) {
       setLocalStream(emptyStream);
       return emptyStream;
     }
-  }, [setLocalStream]);
+  }, [isMicOn, isCameraOn, setLocalStream]);
 
   // ── Audio Analyser (speaking detection) ───────────────────────────────────
   const setupAudioAnalyser = (stream) => {
@@ -104,7 +134,7 @@ export function useWebRTC(meetingId) {
       } else {
         if (!remoteStream.getTracks().includes(event.track)) remoteStream.addTrack(event.track);
       }
-      addRemoteStream(socketId, remoteStream, userInfo?.userName || socketId);
+      addRemoteStream(socketId, remoteStream, userInfo?.userName || socketId, userInfo?.userId);
     };
 
     // ICE candidates
@@ -139,6 +169,9 @@ export function useWebRTC(meetingId) {
 
   // ── Handle Incoming Offer (callee side) ───────────────────────────────────
   const handleOffer = useCallback(async ({ from, fromUser, offer }, emit) => {
+    if (!localStreamRef.current || localStreamRef.current.getTracks().length === 0) {
+      await startLocalStream();
+    }
     const pc = createPeerConnection(from, fromUser, emit);
     try {
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
@@ -149,7 +182,7 @@ export function useWebRTC(meetingId) {
     } catch (err) {
       console.error('[WebRTC] Failed to handle offer:', err);
     }
-  }, [createPeerConnection]);
+  }, [createPeerConnection, startLocalStream]);
 
   // ── Handle Incoming Answer ─────────────────────────────────────────────────
   const handleAnswer = useCallback(async ({ from, answer }) => {
@@ -161,7 +194,7 @@ export function useWebRTC(meetingId) {
     } catch (err) {
       console.error('[WebRTC] Failed to set remote answer:', err);
     }
-  }, []);
+  }, [setLocalStream]);
 
   // ── Handle ICE Candidate ───────────────────────────────────────────────────
   const handleIceCandidate = useCallback(async ({ from, candidate }) => {
@@ -183,93 +216,185 @@ export function useWebRTC(meetingId) {
   }, [removeRemoteStream]);
 
   // ── Screen Share ──────────────────────────────────────────────────────────
+  const stopScreenShare = useCallback(() => {
+    const screenTrack = screenTrackRef.current;
+    const cameraTrack = cameraTrackRef.current;
+
+    if (screenTrack) {
+      screenTrack.stop();
+      screenTrackRef.current = null;
+    }
+    if (screenStreamRef.current) {
+      unregisterStream(screenStreamRef.current);
+      screenStreamRef.current.getTracks().forEach(t => t.stop());
+      screenStreamRef.current = null;
+    }
+
+    if (cameraTrack && isCameraOn) {
+      Object.values(peersRef.current).forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) sender.replaceTrack(cameraTrack);
+        else pc.addTrack(cameraTrack, localStreamRef.current || new MediaStream([cameraTrack]));
+      });
+
+      const audioTracks = localStreamRef.current?.getAudioTracks() || [];
+      const previewStream = new MediaStream([...audioTracks, cameraTrack]);
+      localStreamRef.current = previewStream;
+      setLocalStream(previewStream);
+    } else {
+      const audioTracks = localStreamRef.current?.getAudioTracks() || [];
+      const previewStream = new MediaStream([...audioTracks]);
+      localStreamRef.current = previewStream;
+      setLocalStream(previewStream);
+    }
+  }, [isCameraOn, setLocalStream, startLocalStream]);
+
   const startScreenShare = useCallback(async () => {
     const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
     const videoTrack = screenStream.getVideoTracks()[0];
+    registerStream(screenStream);
+    screenStreamRef.current = screenStream;
+    screenTrackRef.current = videoTrack;
+
     Object.values(peersRef.current).forEach(pc => {
       const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-      sender?.replaceTrack(videoTrack);
+      if (sender) sender.replaceTrack(videoTrack);
+      else pc.addTrack(videoTrack, localStreamRef.current || new MediaStream([videoTrack]));
     });
+
+    // Update local preview to show the shared screen.
+    const audioTracks = localStreamRef.current?.getAudioTracks() || [];
+    const previewStream = new MediaStream([...audioTracks, videoTrack]);
+    localStreamRef.current = previewStream;
+    setLocalStream(previewStream);
+
     videoTrack.onended = () => stopScreenShare();
     return screenStream;
-  }, []);
-
-  const stopScreenShare = useCallback(() => {
-    if (localStreamRef.current) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0];
-      if (videoTrack) {
-        Object.values(peersRef.current).forEach(pc => {
-          const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-          sender?.replaceTrack(videoTrack);
-        });
-      }
-    }
-  }, []);
+  }, [setLocalStream, stopScreenShare]);
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
   const cleanup = useCallback(() => {
     localStreamRef.current?.getTracks().forEach(t => t.stop());
+    if (localStreamRef.current) unregisterStream(localStreamRef.current);
     Object.keys(peersRef.current).forEach(id => peersRef.current[id]?.close());
     audioContextRef.current?.close();
     peersRef.current = {};
     peerUsersRef.current = {};
     analyserRef.current = null;
     audioContextRef.current = null;
+    screenStreamRef.current?.getTracks().forEach(t => t.stop());
+    if (screenStreamRef.current) unregisterStream(screenStreamRef.current);
+    screenStreamRef.current = null;
+    screenTrackRef.current = null;
+    if (cameraTrackRef.current) {
+      cameraTrackRef.current.stop();
+      cameraTrackRef.current = null;
+    }
+    if (micTrackRef.current) {
+      micTrackRef.current.stop();
+      micTrackRef.current = null;
+    }
+    localStreamRef.current = null;
+    setLocalStream(null);
   }, []);
 
   // ── Camera toggle (hardware) ───────────────────────────────────────────────
   useEffect(() => {
-    if (!localStreamRef.current) return;
+    if (!localStreamRef.current) {
+      if (isCameraOn) startLocalStream();
+      return;
+    }
+    const videoTracks = localStreamRef.current.getVideoTracks();
+
     if (!isCameraOn) {
-      localStreamRef.current.getVideoTracks().forEach(t => {
+      // Turn off camera hardware and stop sending video.
+      videoTracks.forEach(t => {
         t.stop();
         localStreamRef.current.removeTrack(t);
       });
-    } else {
-      if (localStreamRef.current.getVideoTracks().length === 0) {
-        navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: 'user' } })
-          .then(stream => {
-            const newTrack = stream.getVideoTracks()[0];
-            localStreamRef.current.addTrack(newTrack);
-            Object.values(peersRef.current).forEach(pc => {
-              const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-              if (sender) sender.replaceTrack(newTrack);
-            });
-            const newStream = new MediaStream(localStreamRef.current.getTracks());
-            localStreamRef.current = newStream;
-            setLocalStream(newStream);
-          })
-          .catch(err => console.warn('Camera resume failed:', err));
-      }
+      cameraTrackRef.current = null;
+      Object.values(peersRef.current).forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) sender.replaceTrack(null);
+      });
+
+      const audioTracks = localStreamRef.current.getAudioTracks();
+      const newStream = new MediaStream([...audioTracks]);
+      localStreamRef.current = newStream;
+      setLocalStream(newStream);
+      return;
+    }
+
+    if (isCameraOn && videoTracks.length === 0) {
+      navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: 'user' } })
+        .then(stream => {
+          const newTrack = stream.getVideoTracks()[0];
+          newTrack.enabled = true;
+          cameraTrackRef.current = newTrack;
+
+          Object.values(peersRef.current).forEach(pc => {
+            const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+            if (sender) sender.replaceTrack(newTrack);
+            else pc.addTrack(newTrack, localStreamRef.current);
+          });
+
+          const audioTracks = localStreamRef.current.getAudioTracks();
+          const newStream = new MediaStream([...audioTracks, newTrack]);
+          localStreamRef.current = newStream;
+          setLocalStream(newStream);
+        })
+        .catch(err => console.warn('Camera resume failed:', err));
     }
   }, [isCameraOn, setLocalStream]);
 
   // ── Mic toggle (hardware) ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!localStreamRef.current) return;
+    if (!localStreamRef.current) {
+      if (isMicOn) startLocalStream();
+      return;
+    }
+    const audioTracks = localStreamRef.current.getAudioTracks();
+
     if (!isMicOn) {
-      localStreamRef.current.getAudioTracks().forEach(t => {
+      // Turn off mic hardware and stop sending audio.
+      audioTracks.forEach(t => {
         t.stop();
         localStreamRef.current.removeTrack(t);
       });
-    } else {
-      if (localStreamRef.current.getAudioTracks().length === 0) {
-        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
-          .then(stream => {
-            const newTrack = stream.getAudioTracks()[0];
-            localStreamRef.current.addTrack(newTrack);
-            Object.values(peersRef.current).forEach(pc => {
-              const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
-              if (sender) sender.replaceTrack(newTrack);
-            });
-            const newStream = new MediaStream(localStreamRef.current.getTracks());
-            localStreamRef.current = newStream;
-            setLocalStream(newStream);
-          })
-          .catch(err => console.warn('Mic resume failed:', err));
-      }
+      micTrackRef.current = null;
+      Object.values(peersRef.current).forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+        if (sender) sender.replaceTrack(null);
+      });
+
+      const videoTracks = localStreamRef.current.getVideoTracks();
+      const newStream = new MediaStream([...videoTracks]);
+      localStreamRef.current = newStream;
+      setLocalStream(newStream);
+      return;
     }
-  }, [isMicOn, setLocalStream]);
+
+    if (isMicOn && audioTracks.length === 0) {
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+        .then(stream => {
+          const newTrack = stream.getAudioTracks()[0];
+          newTrack.enabled = true;
+          micTrackRef.current = newTrack;
+
+          Object.values(peersRef.current).forEach(pc => {
+            const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+            if (sender) sender.replaceTrack(newTrack);
+            else pc.addTrack(newTrack, localStreamRef.current);
+          });
+
+          const videoTracks = localStreamRef.current.getVideoTracks();
+          const newStream = new MediaStream([...videoTracks, newTrack]);
+          localStreamRef.current = newStream;
+          setLocalStream(newStream);
+        })
+        .catch(err => console.warn('Mic resume failed:', err));
+    }
+  }, [isMicOn, setLocalStream, startLocalStream]);
 
   return {
     startLocalStream,

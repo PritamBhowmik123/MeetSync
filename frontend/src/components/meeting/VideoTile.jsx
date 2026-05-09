@@ -3,7 +3,7 @@ import { useMeetingStore } from '../../store/meetingStore'
 import Avatar from '../ui/Avatar'
 import { getInitials } from '../../utils/formatters'
 
-export default function VideoTile({ stream, name, peerId, isLocal = false, isMuted = false, isCameraOff = false }) {
+export default function VideoTile({ stream, name, peerId, isLocal = false, isMuted = false, isCameraOff = false, forceMuted = false }) {
   const videoRef = useRef(null)
   const { speakingPeers, isMicOn } = useMeetingStore()
 
@@ -12,11 +12,20 @@ export default function VideoTile({ stream, name, peerId, isLocal = false, isMut
   const micMuted = isLocal ? !isMicOn : isMuted
 
   useEffect(() => {
-    if (videoRef.current && stream) {
+    if (!videoRef.current) return
+
+    const shouldMute = isLocal || forceMuted
+    if (stream) {
       videoRef.current.srcObject = stream
-      videoRef.current.muted = isLocal
+      videoRef.current.muted = shouldMute
+      const playPromise = videoRef.current.play()
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {})
+      }
+    } else {
+      videoRef.current.srcObject = null
     }
-  }, [stream, isLocal])
+  }, [stream, isLocal, forceMuted])
 
   return (
     <div
@@ -30,7 +39,7 @@ export default function VideoTile({ stream, name, peerId, isLocal = false, isMut
           ref={videoRef}
           autoPlay
           playsInline
-          muted={isLocal}
+          muted={isLocal || forceMuted}
           className="w-full h-full object-cover"
         />
       ) : (

@@ -8,11 +8,13 @@ import Skeleton from '../components/ui/Skeleton'
 import { getMeetingSummary, generateMeetingSummary, getFullTranscript } from '../services/summaryService'
 import { getAttendanceReport } from '../services/attendanceService'
 import { formatDate, formatTime } from '../utils/formatters'
+import { useMeetingStore } from '../store/meetingStore'
 
 export default function PostMeetingSummaryPage() {
   const { id } = useParams()
   const { state } = useLocation()
   const navigate = useNavigate()
+  const { stopActiveTracks, leaveMeeting } = useMeetingStore()
 
   const [summary, setSummary] = useState(null)
   const [transcript, setTranscript] = useState([])
@@ -23,6 +25,12 @@ export default function PostMeetingSummaryPage() {
   const [activeTab, setActiveTab] = useState('summary')
 
   const title = state?.title || 'Meeting Summary'
+
+  useEffect(() => {
+    // Safety: summary pages should never keep mic/camera active.
+    stopActiveTracks()
+    leaveMeeting()
+  }, [])
 
   useEffect(() => {
     const load = async () => {

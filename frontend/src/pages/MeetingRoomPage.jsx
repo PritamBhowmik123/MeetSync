@@ -28,6 +28,7 @@ export default function MeetingRoomPage() {
     meetingTitle,
     attendanceData,
     captionsEnabled,
+    isCameraOn,
     joinMeeting,
     setSidebarTab,
     setScreenSharing,
@@ -152,8 +153,16 @@ export default function MeetingRoomPage() {
       setScreenSharing(false)
     } else {
       try {
-        await startScreenShare()
+        const stream = await startScreenShare()
         setScreenSharing(true)
+        const track = stream?.getVideoTracks?.()[0]
+        if (track) {
+          const prevOnEnded = track.onended
+          track.onended = () => {
+            if (typeof prevOnEnded === 'function') prevOnEnded()
+            setScreenSharing(false)
+          }
+        }
       } catch (e) {
         alert(e.message)
       }
@@ -242,6 +251,7 @@ export default function MeetingRoomPage() {
                 name={user?.name || 'You'}
                 peerId="local"
                 isLocal
+                isCameraOff={!isCameraOn}
               />
 
               {/* Remote videos */}
@@ -253,6 +263,7 @@ export default function MeetingRoomPage() {
                   peerId={participant.id}
                   isMuted={participant.isMuted}
                   isCameraOff={participant.isCameraOff}
+                  forceMuted={participant.userId && participant.userId === user?.id}
                 />
               ))}
             </div>

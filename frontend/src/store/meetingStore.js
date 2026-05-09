@@ -8,6 +8,7 @@ export const useMeetingStore = create((set, get) => ({
 
   // Media state
   localStream: null,
+  activeTracks: [],
   remoteStreams: {},   // { peerId: MediaStream }
   isMicOn: true,
   isCameraOn: true,
@@ -46,20 +47,29 @@ export const useMeetingStore = create((set, get) => ({
 
   setJoined: () => set({ isJoined: true, isConnecting: false }),
 
-  setLocalStream: (stream) => set({ localStream: stream }),
+  setLocalStream: (stream) => set({ localStream: stream, activeTracks: stream ? stream.getTracks() : [] }),
 
-  addRemoteStream: (peerId, stream, name) =>
+  stopActiveTracks: () =>
+    set((s) => {
+      s.activeTracks.forEach(t => {
+        try { t.stop(); } catch (_) {}
+      })
+      return { activeTracks: [], localStream: null }
+    }),
+
+  addRemoteStream: (peerId, stream, name, userId) =>
     set((s) => {
       const existing = s.participants.find(p => p.id === peerId);
       // Logic: Prefer a new name if it's specific (not Guest/socketId). Otherwise keep existing name.
       const isNewNameValid = name && name !== peerId && name !== 'Guest';
       const updatedName = isNewNameValid ? name : (existing?.name || name || 'Guest');
+      const updatedUserId = userId ?? existing?.userId ?? null;
       
       return {
         remoteStreams: { ...s.remoteStreams, [peerId]: stream },
         participants: existing
-          ? s.participants.map(p => p.id === peerId ? { ...p, stream, name: updatedName } : p)
-          : [...s.participants, { id: peerId, name: updatedName, stream, isMuted: false, isCameraOff: false }],
+          ? s.participants.map(p => p.id === peerId ? { ...p, stream, name: updatedName, userId: updatedUserId } : p)
+          : [...s.participants, { id: peerId, name: updatedName, userId: updatedUserId, stream, isMuted: false, isCameraOff: false }],
       };
     }),
 
@@ -72,40 +82,31 @@ export const useMeetingStore = create((set, get) => ({
       }
     }),
 
-  updateParticipantMedia: (peerId, { isMuted, isCameraOff, name }) =>
+  updateParticipantMedia: (peerId, { isMuted, isCameraOff, name, userId }) =>
     set((s) => {
       const existing = s.participants.find(p => p.id === peerId);
       const isNewNameValid = name && name !== peerId && name !== 'Guest';
       const updatedName = isNewNameValid ? name : (existing?.name || 'Guest');
+      const updatedUserId = userId ?? existing?.userId ?? null;
       
       if (existing) {
         return {
           participants: s.participants.map(p => 
-            p.id === peerId ? { ...p, isMuted: isMuted ?? p.isMuted, isCameraOff: isCameraOff ?? p.isCameraOff, name: updatedName } : p
+            p.id === peerId ? { ...p, isMuted: isMuted ?? p.isMuted, isCameraOff: isCameraOff ?? p.isCameraOff, name: updatedName, userId: updatedUserId } : p
           )
         };
       } else {
         return {
-          participants: [...s.participants, { id: peerId, name: updatedName, stream: null, isMuted: isMuted ?? false, isCameraOff: isCameraOff ?? false }]
+          participants: [...s.participants, { id: peerId, name: updatedName, userId: updatedUserId, stream: null, isMuted: isMuted ?? false, isCameraOff: isCameraOff ?? false }]
         };
       }
     }),
 
   toggleMic: () =>
-    set((s) => {
-      if (s.localStream) {
-        s.localStream.getAudioTracks().forEach(t => (t.enabled = !s.isMicOn))
-      }
-      return { isMicOn: !s.isMicOn }
-    }),
+    set((s) => ({ isMicOn: !s.isMicOn })),
 
   toggleCamera: () =>
-    set((s) => {
-      if (s.localStream) {
-        s.localStream.getVideoTracks().forEach(t => (t.enabled = !s.isCameraOn))
-      }
-      return { isCameraOn: !s.isCameraOn }
-    }),
+    set((s) => ({ isCameraOn: !s.isCameraOn })),
 
   setScreenSharing: (val) => set({ isScreenSharing: val }),
 
@@ -116,7 +117,11 @@ export const useMeetingStore = create((set, get) => ({
     })),
 
   addMessage: (msg) =>
-    set((s) => ({ messages: [...s.messages, { ...msg, id: Date.now() }] })),
+    set((s) => {
+      const id = msg.id || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      if (s.messages.some(m => m.id === id)) return s;
+      return { messages: [...s.messages, { ...msg, id }] };
+    }),
 
   setSpeaking: (peerId, speaking) =>
     set((s) => {

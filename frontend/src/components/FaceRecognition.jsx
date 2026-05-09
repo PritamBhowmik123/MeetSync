@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { registerStream, unregisterStream } from '../utils/mediaRegistry';
 
 export default function FaceRecognition() {
   const videoRef = useRef(null);
@@ -14,6 +15,7 @@ export default function FaceRecognition() {
   const startVideo = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      registerStream(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         setStreamActive(true);
@@ -28,6 +30,7 @@ export default function FaceRecognition() {
     if (videoRef.current && videoRef.current.srcObject) {
       const tracks = videoRef.current.srcObject.getTracks();
       tracks.forEach(track => track.stop());
+      unregisterStream(videoRef.current.srcObject);
       videoRef.current.srcObject = null;
       setStreamActive(false);
       
